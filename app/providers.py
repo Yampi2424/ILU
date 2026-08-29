@@ -24,43 +24,57 @@ class AIProvider:
 class LocalProvider(AIProvider):
     """
     Proveedor de IA local mediante Ollama.
-
-    Si Ollama o el modelo no están disponibles,
-    I.L.U. utiliza una respuesta de respaldo.
+    Optimizado para equipos con recursos limitados.
     """
 
     def __init__(self):
         super().__init__()
 
         self.name = "ollama"
-        self.version = "0.2.0"
+        self.version = "0.4.0"
 
         self.model = os.environ.get(
             "ILU_LOCAL_MODEL",
-            "llama3.2:1b-instruct-q3_K_M"
+            "qwen2.5:0.5b-instruct"
         )
+
+        self.host = os.environ.get(
+            "OLLAMA_HOST",
+            "http://127.0.0.1:11434"
+        )
+
+        self.client = None
+
+        if ollama is not None:
+            self.client = ollama.Client(
+                host=self.host,
+                timeout=300
+            )
 
     def generate(self, message, context=None):
         context = context or []
 
-        if ollama is None:
+        if self.client is None:
             return (
-                "I.L.U. está preparada para utilizar "
-                "un modelo local, pero el cliente Ollama "
-                "todavía no está instalado."
+                "I.L.U. no puede utilizar el modelo local "
+                "porque el cliente Ollama no está instalado."
             )
 
         context_text = ""
 
         for item in context:
-            content = item.get("content")
+            if isinstance(item, dict):
+                content = item.get("content")
 
-            if content:
-                context_text += f"- {content}\n"
+                if content:
+                    context_text += f"- {content}\n"
 
         prompt = (
             "Eres I.L.U., Inteligencia Local Unificada.\n"
-            "Responde en español de forma clara y directa.\n\n"
+            "Eres el cerebro local de una arquitectura de "
+            "inteligencia ligera.\n"
+            "Responde siempre en español.\n"
+            "Sé clara, directa y útil.\n\n"
         )
 
         if context_text:
@@ -76,22 +90,26 @@ class LocalProvider(AIProvider):
         )
 
         try:
-            result = ollama.chat(
+            result = self.client.chat(
                 model=self.model,
                 messages=[
                     {
                         "role": "user",
                         "content": prompt
                     }
-                ]
+                ],
+                options={
+                    "num_ctx": 4096,
+                    "temperature": 0.7
+                }
             )
 
-            return result["message"]["content"]
+            return result["message"]["content"].strip()
 
-        except Exception:
+        except Exception as error:
             return (
-                "I.L.U. recibió la solicitud, pero el modelo "
-                f"local '{self.model}' no está disponible todavía."
+                "I.L.U. no pudo obtener respuesta del modelo local. "
+                f"Detalle: {error}"
             )
 
 

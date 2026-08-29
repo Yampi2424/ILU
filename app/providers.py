@@ -37,7 +37,7 @@ class LocalProvider(AIProvider):
 
         self.model = os.environ.get(
             "ILU_LOCAL_MODEL",
-            "llama3.2:1b"
+            "llama3.2:1b-instruct-q3_K_M"
         )
 
     def generate(self, message, context=None):

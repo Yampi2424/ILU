@@ -1,28 +1,34 @@
 from memory.store import MemoryStore
+from app.reasoning import ILUReasoning
 
 
 class ILUCore:
     """
-    Núcleo lógico de I.L.U.
+    Núcleo central de I.L.U.
 
-    Procesa mensajes, administra memoria persistente
-    y utiliza contexto relevante para la conversación.
+    Coordina:
+    - procesamiento de mensajes
+    - memoria persistente
+    - recuperación de contexto
+    - motor de razonamiento
     """
 
     def __init__(self):
         self.name = "I.L.U."
-        self.version = "0.5.0"
-        self.memory = MemoryStore()
+        self.version = "0.6.0"
 
-    def _next_memory_key(self, prefix="memory"):
+        self.memory = MemoryStore()
+        self.reasoning = ILUReasoning()
+
+    def _next_memory_key(self):
         memories = self.memory.load_all()
 
         index = 1
 
-        while f"{prefix}_{index}" in memories:
+        while f"memory_{index}" in memories:
             index += 1
 
-        return f"{prefix}_{index}"
+        return f"memory_{index}"
 
     def _save_memory(
         self,
@@ -35,10 +41,8 @@ class ILUCore:
         if not content:
             return None
 
-        key = self._next_memory_key()
-
         self.memory.save(
-            key,
+            self._next_memory_key(),
             content,
             memory_type=memory_type,
             importance=importance
@@ -50,14 +54,13 @@ class ILUCore:
         lowered = content.lower()
 
         if any(
-            word in lowered
-            for word in (
+            phrase in lowered
+            for phrase in (
                 "prefiero",
                 "prefiere",
                 "me gusta",
                 "no me gusta",
-                "mi preferencia",
-                "prefiero que"
+                "mi preferencia"
             )
         ):
             return "preference", 9
@@ -146,10 +149,7 @@ class ILUCore:
         results = []
 
         for word in words:
-            found = self.memory.search(
-                word,
-                limit=5
-            )
+            found = self.memory.search(word, limit=5)
 
             for item in found:
                 if item not in results:
@@ -158,10 +158,6 @@ class ILUCore:
         return results[:10]
 
     def _get_context(self, message):
-        """
-        Recupera recuerdos relacionados con el mensaje actual.
-        """
-
         words = [
             word.strip("¿?¡!,.:;")
             for word in message.lower().split()
@@ -174,10 +170,7 @@ class ILUCore:
         results = []
 
         for word in words[:6]:
-            found = self.memory.search(
-                word,
-                limit=3
-            )
+            found = self.memory.search(word, limit=3)
 
             for item in found:
                 if item not in results:
@@ -199,6 +192,44 @@ class ILUCore:
 
         return " | ".join(values)
 
+    def _basic_response(self, message):
+        lowered = message.lower()
+
+        if lowered in (
+            "hola",
+            "hello",
+            "buenas",
+            "buenos dias",
+            "buenas tardes"
+        ):
+            return (
+                "Hola. I.L.U. está disponible.",
+                "greeting"
+            )
+
+        if "estado" in lowered or "status" in lowered:
+            return (
+                "I.L.U. está operativa.",
+                "status"
+            )
+
+        if (
+            "quien eres" in lowered
+            or "qué eres" in lowered
+            or "que eres" in lowered
+        ):
+            return (
+                "Soy I.L.U., una arquitectura de inteligencia "
+                "preparada para trabajar localmente y en la nube.",
+                "identity"
+            )
+
+        return (
+            "He recibido tu mensaje. "
+            "El núcleo de procesamiento está funcionando.",
+            "general"
+        )
+
     def process(self, message):
         if not isinstance(message, str):
             return {
@@ -214,9 +245,7 @@ class ILUCore:
                 "error": "empty_message"
             }
 
-        explicit_memory = self._save_explicit_memory(
-            message
-        )
+        explicit_memory = self._save_explicit_memory(message)
 
         if explicit_memory:
             return {
@@ -226,28 +255,21 @@ class ILUCore:
                 "memory_type": explicit_memory["type"],
                 "importance": explicit_memory["importance"],
                 "response": (
-                    f"Recordado: "
-                    f"{explicit_memory['content']}"
+                    f"Recordado: {explicit_memory['content']}"
                 ),
                 "core": self.name,
                 "version": self.version
             }
 
-        memory_results = self._search_memory(
-            message
-        )
+        memory_results = self._search_memory(message)
 
         if memory_results is not None:
             if not memory_results:
-                response = (
-                    "No encontré recuerdos relacionados."
-                )
+                response = "No encontré recuerdos relacionados."
             else:
                 response = (
                     "Recuerdo: "
-                    + self._format_memories(
-                        memory_results
-                    )
+                    + self._format_memories(memory_results)
                 )
 
             return {
@@ -262,63 +284,27 @@ class ILUCore:
         context = self._get_context(message)
         context_text = self._format_memories(context)
 
-        lowered = message.lower()
+        basic_response, intent = self._basic_response(message)
 
-        if lowered in (
-            "hola",
-            "hello",
-            "buenas",
-            "buenos dias",
-            "buenas tardes"
-        ):
-            response = (
-                "Hola. I.L.U. está disponible."
-            )
+        analysis = self.reasoning.analyze(
+            message,
+            context
+        )
 
-            intent = "greeting"
+        reasoning = self.reasoning.respond(
+            analysis
+        )
 
-        elif (
-            "estado" in lowered
-            or "status" in lowered
-        ):
-            response = (
-                "I.L.U. está operativa."
-            )
+        if intent == "general" and reasoning.get("success"):
+            response = reasoning["response"]
 
-            intent = "status"
-
-        elif (
-            "quien eres" in lowered
-            or "qué eres" in lowered
-            or "que eres" in lowered
-        ):
-            response = (
-                "Soy I.L.U., una arquitectura "
-                "de inteligencia preparada para "
-                "trabajar localmente y en la nube."
-            )
-
-            intent = "identity"
-
-        else:
             if context_text:
-                response = (
-                    "He recibido tu mensaje. "
-                    f"Contexto relacionado: "
-                    f"{context_text}"
+                response += (
+                    f" Contexto relacionado: {context_text}"
                 )
-            else:
-                response = (
-                    "He recibido tu mensaje. "
-                    "El núcleo de procesamiento "
-                    "está funcionando."
-                )
+        else:
+            response = basic_response
 
-            intent = "general"
-
-        # Solo almacenamos conversaciones normales.
-        # Los comandos de memoria ya fueron almacenados
-        # mediante _save_explicit_memory().
         self._save_memory(
             message,
             memory_type="conversation",
@@ -331,6 +317,10 @@ class ILUCore:
             "intent": intent,
             "response": response,
             "context": context_text,
+            "reasoning": {
+                "type": reasoning.get("reasoning_type"),
+                "context_used": reasoning.get("context_used", 0)
+            },
             "core": self.name,
             "version": self.version
         }

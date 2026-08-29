@@ -1,5 +1,10 @@
 import os
 
+try:
+    import ollama
+except ImportError:
+    ollama = None
+
 
 class AIProvider:
     """
@@ -8,7 +13,7 @@ class AIProvider:
 
     def __init__(self):
         self.name = "base"
-        self.version = "0.1.0"
+        self.version = "0.2.0"
 
     def generate(self, message, context=None):
         raise NotImplementedError(
@@ -18,65 +23,97 @@ class AIProvider:
 
 class LocalProvider(AIProvider):
     """
-    Proveedor local liviano.
+    Proveedor de IA local mediante Ollama.
 
-    No requiere un modelo pesado.
-    Sirve como proveedor de respaldo mientras
-    se incorpora el modelo de IA definitivo.
+    Si Ollama o el modelo no están disponibles,
+    I.L.U. utiliza una respuesta de respaldo.
     """
 
     def __init__(self):
         super().__init__()
-        self.name = "local"
-        self.version = "0.1.0"
+
+        self.name = "ollama"
+        self.version = "0.2.0"
+
+        self.model = os.environ.get(
+            "ILU_LOCAL_MODEL",
+            "llama3.2:1b"
+        )
 
     def generate(self, message, context=None):
         context = context or []
 
-        if context:
+        if ollama is None:
             return (
-                "Procesamiento local realizado. "
-                "I.L.U. dispone de contexto relacionado."
+                "I.L.U. está preparada para utilizar "
+                "un modelo local, pero el cliente Ollama "
+                "todavía no está instalado."
             )
 
-        return (
-            "Procesamiento local realizado. "
-            "I.L.U. está preparada para utilizar un modelo de IA."
+        context_text = ""
+
+        for item in context:
+            content = item.get("content")
+
+            if content:
+                context_text += f"- {content}\n"
+
+        prompt = (
+            "Eres I.L.U., Inteligencia Local Unificada.\n"
+            "Responde en español de forma clara y directa.\n\n"
         )
+
+        if context_text:
+            prompt += (
+                "Contexto recuperado de la memoria:\n"
+                f"{context_text}\n"
+            )
+
+        prompt += (
+            "Mensaje del usuario:\n"
+            f"{message}\n\n"
+            "Respuesta:"
+        )
+
+        try:
+            result = ollama.chat(
+                model=self.model,
+                messages=[
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+            )
+
+            return result["message"]["content"]
+
+        except Exception:
+            return (
+                "I.L.U. recibió la solicitud, pero el modelo "
+                f"local '{self.model}' no está disponible todavía."
+            )
 
 
 class CloudProvider(AIProvider):
     """
-    Punto de entrada para futuros modelos en la nube.
-
-    Actualmente funciona como respaldo seguro y no realiza
-    llamadas externas.
+    Interfaz para futuros modelos cloud.
     """
 
     def __init__(self):
         super().__init__()
+
         self.name = "cloud"
-        self.version = "0.1.0"
+        self.version = "0.2.0"
 
     def generate(self, message, context=None):
         return (
-            "El proveedor cloud está configurado como interfaz "
-            "y preparado para incorporar un modelo."
+            "El proveedor cloud está preparado para "
+            "incorporar un modelo de inteligencia."
         )
 
 
 def create_provider():
-    """
-    Selecciona el proveedor mediante ILU_AI_PROVIDER.
-
-    Valores:
-        local
-        cloud
-
-    Por defecto:
-        local
-    """
-
     provider_name = os.environ.get(
         "ILU_AI_PROVIDER",
         "local"

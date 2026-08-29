@@ -166,6 +166,13 @@ class ILUCore:
         return results[:10]
 
     def _get_context(self, message):
+        """
+        Recupera recuerdos relevantes para una conversación normal.
+
+        No busca palabras demasiado cortas y limita la cantidad
+        de resultados para mantener I.L.U. ligera.
+        """
+
         words = [
             word.strip("¿?¡!,.:;")
             for word in message.lower().split()

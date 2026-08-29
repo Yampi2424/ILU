@@ -1,5 +1,6 @@
 from memory.store import MemoryStore
 from app.reasoning import ILUReasoning
+from app.providers import create_provider
 
 
 class ILUCore:
@@ -7,18 +8,20 @@ class ILUCore:
     Núcleo central de I.L.U.
 
     Coordina:
-    - procesamiento de mensajes
-    - memoria persistente
-    - recuperación de contexto
-    - motor de razonamiento
+    - procesamiento
+    - memoria
+    - contexto
+    - razonamiento
+    - proveedor de IA
     """
 
     def __init__(self):
         self.name = "I.L.U."
-        self.version = "0.6.0"
+        self.version = "0.7.0"
 
         self.memory = MemoryStore()
         self.reasoning = ILUReasoning()
+        self.provider = create_provider()
 
     def _next_memory_key(self):
         memories = self.memory.load_all()
@@ -149,7 +152,10 @@ class ILUCore:
         results = []
 
         for word in words:
-            found = self.memory.search(word, limit=5)
+            found = self.memory.search(
+                word,
+                limit=5
+            )
 
             for item in found:
                 if item not in results:
@@ -170,7 +176,10 @@ class ILUCore:
         results = []
 
         for word in words[:6]:
-            found = self.memory.search(word, limit=3)
+            found = self.memory.search(
+                word,
+                limit=3
+            )
 
             for item in found:
                 if item not in results:
@@ -225,8 +234,7 @@ class ILUCore:
             )
 
         return (
-            "He recibido tu mensaje. "
-            "El núcleo de procesamiento está funcionando.",
+            None,
             "general"
         )
 
@@ -282,9 +290,6 @@ class ILUCore:
             }
 
         context = self._get_context(message)
-        context_text = self._format_memories(context)
-
-        basic_response, intent = self._basic_response(message)
 
         analysis = self.reasoning.analyze(
             message,
@@ -295,15 +300,18 @@ class ILUCore:
             analysis
         )
 
-        if intent == "general" and reasoning.get("success"):
-            response = reasoning["response"]
+        basic_response, intent = self._basic_response(
+            message
+        )
 
-            if context_text:
-                response += (
-                    f" Contexto relacionado: {context_text}"
-                )
-        else:
+        if basic_response:
             response = basic_response
+
+        else:
+            response = self.provider.generate(
+                message,
+                context
+            )
 
         self._save_memory(
             message,
@@ -316,10 +324,17 @@ class ILUCore:
             "input": message,
             "intent": intent,
             "response": response,
-            "context": context_text,
+            "context": self._format_memories(context),
             "reasoning": {
                 "type": reasoning.get("reasoning_type"),
-                "context_used": reasoning.get("context_used", 0)
+                "context_used": reasoning.get(
+                    "context_used",
+                    0
+                )
+            },
+            "provider": {
+                "name": self.provider.name,
+                "version": self.provider.version
             },
             "core": self.name,
             "version": self.version

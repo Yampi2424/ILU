@@ -1,6 +1,7 @@
 from memory.store import MemoryStore
 from app.reasoning import ILUReasoning
 from app.providers import create_provider
+from config.settings import ILUSettings
 
 
 class ILUCore:
@@ -16,8 +17,9 @@ class ILUCore:
     """
 
     def __init__(self):
-        self.name = "I.L.U."
-        self.version = "0.7.0"
+        self.settings = ILUSettings()
+        self.name = self.settings.name
+        self.version = self.settings.version
 
         self.memory = MemoryStore()
         self.reasoning = ILUReasoning()

@@ -3,9 +3,11 @@ import json
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from .core import ILUCore
+from config.settings import ILUSettings
 
 
 core = ILUCore()
+settings = ILUSettings()
 
 
 class ILUHandler(BaseHTTPRequestHandler):
@@ -38,7 +40,7 @@ class ILUHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "name": "I.L.U.",
                 "status": "online",
-                "version": "0.1.0"
+                "version": settings.version
             })
 
         elif self.path == "/healthz":
@@ -50,7 +52,7 @@ class ILUHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "name": "I.L.U.",
                 "description": "Inteligencia Local Unificada",
-                "version": "0.1.0",
+                "version": settings.version,
                 "mode": "cloud-ready"
             })
 

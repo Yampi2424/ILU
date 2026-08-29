@@ -5,46 +5,51 @@ class ILUCore:
     """
     Núcleo lógico de I.L.U.
 
-    Procesa mensajes y mantiene memoria persistente
-    de conversación.
+    Procesa mensajes, mantiene memoria persistente
+    y recupera contexto relevante de conversaciones.
     """
 
     def __init__(self):
         self.name = "I.L.U."
-        self.version = "0.3.0"
+        self.version = "0.4.0"
         self.memory = MemoryStore()
 
-    def _save_memory(self, message, memory_type="conversation", importance=5):
-        text = message.strip()
+    def _save_memory(self, content, memory_type="conversation", importance=5):
+        content = content.strip()
 
-        if not text:
+        if not content:
             return None
 
-        count = len(self.memory.load_all())
-        key = f"memory_{count + 1}"
+        memories = self.memory.load_all()
+
+        index = 1
+        while f"memory_{index}" in memories:
+            index += 1
+
+        key = f"memory_{index}"
 
         self.memory.save(
             key,
-            text,
+            content,
             memory_type=memory_type,
             importance=importance
         )
 
-        return text
+        return content
 
     def _save_explicit_memory(self, message):
-        text = message.strip()
-
-        prefixes = [
+        prefixes = (
             "recuerda que ",
             "recuerda ",
             "memoriza que ",
             "memoriza ",
-        ]
+        )
+
+        lowered = message.lower()
 
         for prefix in prefixes:
-            if text.lower().startswith(prefix):
-                content = text[len(prefix):].strip()
+            if lowered.startswith(prefix):
+                content = message[len(prefix):].strip()
 
                 if content:
                     self._save_memory(
@@ -61,29 +66,68 @@ class ILUCore:
         lowered = message.lower()
 
         if (
-            "que recuerdas" in lowered
-            or "qué recuerdas" in lowered
-            or "busca en tu memoria" in lowered
-            or "busca en la memoria" in lowered
+            "que recuerdas" not in lowered
+            and "qué recuerdas" not in lowered
+            and "busca en tu memoria" not in lowered
+            and "busca en la memoria" not in lowered
         ):
-            words = [
-                word.strip("¿?¡!,.:;")
-                for word in lowered.split()
-                if len(word.strip("¿?¡!,.:;")) >= 4
-            ]
+            return None
 
-            results = []
+        words = [
+            word.strip("¿?¡!,.:;")
+            for word in lowered.split()
+            if len(word.strip("¿?¡!,.:;")) >= 4
+        ]
 
-            for word in words:
-                found = self.memory.search(word, limit=5)
+        results = []
 
-                for item in found:
-                    if item not in results:
-                        results.append(item)
+        for word in words:
+            for item in self.memory.search(word, limit=5):
+                if item not in results:
+                    results.append(item)
 
-            return results
+        return results[:5]
 
-        return None
+    def _get_context(self, message):
+        """
+        Busca recuerdos relacionados con el mensaje actual.
+
+        No utiliza el contexto para comandos explícitos de memoria,
+        porque esos ya tienen su propio flujo.
+        """
+
+        words = [
+            word.strip("¿?¡!,.:;")
+            for word in message.lower().split()
+            if len(word.strip("¿?¡!,.:;")) >= 5
+        ]
+
+        if not words:
+            return []
+
+        results = []
+
+        for word in words[:6]:
+            for item in self.memory.search(word, limit=3):
+                if item not in results:
+                    results.append(item)
+
+        return results[:5]
+
+    def _format_context(self, context):
+        if not context:
+            return ""
+
+        memories = [
+            item["content"]
+            for item in context
+            if item.get("content")
+        ]
+
+        if not memories:
+            return ""
+
+        return " | ".join(memories)
 
     def process(self, message):
         if not isinstance(message, str):
@@ -120,7 +164,7 @@ class ILUCore:
             else:
                 memories = [
                     item["content"]
-                    for item in memory_results[:5]
+                    for item in memory_results
                 ]
 
                 response = "Recuerdo: " + " | ".join(memories)
@@ -133,6 +177,9 @@ class ILUCore:
                 "core": self.name,
                 "version": self.version
             }
+
+        context = self._get_context(message)
+        context_text = self._format_context(context)
 
         lowered = message.lower()
 
@@ -162,10 +209,17 @@ class ILUCore:
             intent = "identity"
 
         else:
-            response = (
-                "He recibido tu mensaje. "
-                "El núcleo de procesamiento está funcionando."
-            )
+            if context_text:
+                response = (
+                    "He recibido tu mensaje. "
+                    f"Contexto relacionado: {context_text}"
+                )
+            else:
+                response = (
+                    "He recibido tu mensaje. "
+                    "El núcleo de procesamiento está funcionando."
+                )
+
             intent = "general"
 
         self._save_memory(
@@ -179,6 +233,7 @@ class ILUCore:
             "input": message,
             "intent": intent,
             "response": response,
+            "context": context_text,
             "core": self.name,
             "version": self.version
         }

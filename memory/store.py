@@ -10,9 +10,11 @@ class MemoryStore:
     """
     Memoria persistente de I.L.U.
 
-    En producción utiliza Neon PostgreSQL.
-    En desarrollo, si no existe DATABASE_URL,
-    utiliza almacenamiento JSON local.
+    Producción:
+        Neon PostgreSQL
+
+    Desarrollo:
+        JSON local si no existe DATABASE_URL.
     """
 
     def __init__(self, path="memory/data.json"):
@@ -82,6 +84,9 @@ class MemoryStore:
             "type": memory_type,
             "content": value,
             "importance": importance,
+            "created_at": datetime.now(
+                timezone.utc
+            ).isoformat(),
             "updated_at": datetime.now(
                 timezone.utc
             ).isoformat()
@@ -127,6 +132,97 @@ class MemoryStore:
 
         return item
 
+    def _recency_score(self, updated_at):
+        if not updated_at:
+            return 0.0
+
+        try:
+            if isinstance(updated_at, str):
+                updated = datetime.fromisoformat(
+                    updated_at.replace("Z", "+00:00")
+                )
+            else:
+                updated = updated_at
+
+            if updated.tzinfo is None:
+                updated = updated.replace(
+                    tzinfo=timezone.utc
+                )
+
+            now = datetime.now(timezone.utc)
+            age_days = max(
+                0,
+                (now - updated).total_seconds() / 86400
+            )
+
+            return 1.0 / (1.0 + age_days)
+
+        except Exception:
+            return 0.0
+
+    def _score_memory(self, item, text):
+        content = str(
+            item.get("content", "")
+        ).lower()
+
+        key = str(
+            item.get("key", "")
+        ).lower()
+
+        query = str(text).lower().strip()
+
+        if not query:
+            return 0.0
+
+        query_words = {
+            word.strip("¿?¡!,.:;()[]{}")
+            for word in query.split()
+            if len(word.strip("¿?¡!,.:;()[]{}")) >= 3
+        }
+
+        content_words = {
+            word.strip("¿?¡!,.:;()[]{}")
+            for word in content.split()
+            if len(word.strip("¿?¡!,.:;()[]{}")) >= 3
+        }
+
+        key_words = {
+            word.strip("¿?¡!,.:;()[]{}")
+            for word in key.split()
+            if len(word.strip("¿?¡!,.:;()[]{}")) >= 3
+        }
+
+        overlap = query_words & content_words
+        key_overlap = query_words & key_words
+
+        exact_content = query in content
+        exact_key = query in key
+
+        relevance = 0.0
+
+        if exact_content:
+            relevance += 10.0
+
+        if exact_key:
+            relevance += 8.0
+
+        relevance += len(overlap) * 3.0
+        relevance += len(key_overlap) * 4.0
+
+        importance = float(
+            item.get("importance", 5)
+        )
+
+        recency = self._recency_score(
+            item.get("updated_at")
+        )
+
+        return (
+            relevance
+            + (importance * 0.8)
+            + (recency * 2.0)
+        )
+
     def search(self, text, limit=10):
         text = str(text).strip()
 
@@ -149,19 +245,27 @@ class MemoryStore:
                         WHERE
                             memory_key ILIKE %s
                             OR content ILIKE %s
+                            OR EXISTS (
+                                SELECT 1
+                                FROM regexp_split_to_table(
+                                    LOWER(content),
+                                    '\\s+'
+                                ) AS word
+                                WHERE word ILIKE %s
+                            )
                         ORDER BY importance DESC, updated_at DESC
-                        LIMIT %s
+                        LIMIT 50
                         """,
                         (
                             f"%{text}%",
                             f"%{text}%",
-                            limit
+                            f"%{text}%"
                         )
                     )
 
                     rows = cursor.fetchall()
 
-                    return [
+                    results = [
                         {
                             "type": row[0],
                             "key": row[1],
@@ -173,41 +277,76 @@ class MemoryStore:
                         for row in rows
                     ]
 
-        data = self.load_all()
-        results = []
+        else:
+            data = self.load_all()
+            results = []
 
-        text_lower = text.lower()
+            text_lower = text.lower()
 
-        for key, value in data.items():
-            if isinstance(value, dict):
-                content = str(value.get("content", ""))
-                memory_type = value.get("type", "general")
-                importance = value.get("importance", 5)
-                updated_at = value.get("updated_at")
-            else:
-                content = str(value)
-                memory_type = "general"
-                importance = 5
-                updated_at = None
+            for key, value in data.items():
+                if isinstance(value, dict):
+                    content = str(
+                        value.get("content", "")
+                    )
+                    memory_type = value.get(
+                        "type",
+                        "general"
+                    )
+                    importance = value.get(
+                        "importance",
+                        5
+                    )
+                    created_at = value.get(
+                        "created_at"
+                    )
+                    updated_at = value.get(
+                        "updated_at"
+                    )
+                else:
+                    content = str(value)
+                    memory_type = "general"
+                    importance = 5
+                    created_at = None
+                    updated_at = None
 
-            if (
-                text_lower in key.lower()
-                or text_lower in content.lower()
-            ):
-                results.append({
-                    "type": memory_type,
-                    "key": key,
-                    "content": content,
-                    "importance": importance,
-                    "updated_at": updated_at
-                })
+                if (
+                    text_lower in key.lower()
+                    or text_lower in content.lower()
+                ):
+                    results.append({
+                        "type": memory_type,
+                        "key": key,
+                        "content": content,
+                        "importance": importance,
+                        "created_at": created_at,
+                        "updated_at": updated_at
+                    })
 
-        results.sort(
-            key=lambda item: item.get("importance", 5),
+        scored = []
+
+        for item in results:
+            score = self._score_memory(
+                item,
+                text
+            )
+
+            if score > 0:
+                item = dict(item)
+                item["score"] = round(
+                    score,
+                    3
+                )
+                scored.append(item)
+
+        scored.sort(
+            key=lambda item: (
+                item.get("score", 0),
+                item.get("importance", 5)
+            ),
             reverse=True
         )
 
-        return results[:limit]
+        return scored[:limit]
 
     def load_all(self):
         if self.database_url:
@@ -243,5 +382,8 @@ class MemoryStore:
         if not self.path.exists():
             return {}
 
-        with self.path.open("r", encoding="utf-8") as file:
+        with self.path.open(
+            "r",
+            encoding="utf-8"
+        ) as file:
             return json.load(file)

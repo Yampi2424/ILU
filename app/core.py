@@ -146,9 +146,9 @@ class ILUCore:
             return None
 
         words = [
-            word.strip("¿?¡!,.:;")
+            word.strip("¿?¡!,.:;()[]{}")
             for word in lowered.split()
-            if len(word.strip("¿?¡!,.:;")) >= 4
+            if len(word.strip("¿?¡!,.:;()[]{}")) >= 4
         ]
 
         results = []
@@ -163,38 +163,56 @@ class ILUCore:
                 if item not in results:
                     results.append(item)
 
+        results.sort(
+            key=lambda item: item.get("score", 0),
+            reverse=True
+        )
+
         return results[:10]
 
     def _get_context(self, message):
         """
-        Recupera recuerdos relevantes para una conversación normal.
+        Recupera contexto relevante para una conversación normal.
 
-        No busca palabras demasiado cortas y limita la cantidad
-        de resultados para mantener I.L.U. ligera.
+        MemoryStore calcula un puntaje combinando:
+        - coincidencia
+        - importancia
+        - recencia
+
+        El Core conserva solamente los recuerdos
+        más relevantes para mantener I.L.U. ligera.
         """
 
         words = [
-            word.strip("¿?¡!,.:;")
+            word.strip("¿?¡!,.:;()[]{}")
             for word in message.lower().split()
-            if len(word.strip("¿?¡!,.:;")) >= 5
+            if len(word.strip("¿?¡!,.:;()[]{}")) >= 5
         ]
 
         if not words:
             return []
 
-        results = []
+        candidates = []
 
         for word in words[:6]:
             found = self.memory.search(
                 word,
-                limit=3
+                limit=5
             )
 
             for item in found:
-                if item not in results:
-                    results.append(item)
+                if item not in candidates:
+                    candidates.append(item)
 
-        return results[:5]
+        candidates.sort(
+            key=lambda item: (
+                item.get("score", 0),
+                item.get("importance", 5)
+            ),
+            reverse=True
+        )
+
+        return candidates[:5]
 
     def _format_memories(self, memories):
         if not memories:
@@ -294,6 +312,7 @@ class ILUCore:
                 "input": message,
                 "intent": "memory_read",
                 "response": response,
+                "memory_count": len(memory_results),
                 "core": self.name,
                 "version": self.version
             }
@@ -348,3 +367,5 @@ class ILUCore:
             "core": self.name,
             "version": self.version
         }
+
+

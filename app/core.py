@@ -2,6 +2,7 @@ from memory.store import MemoryStore
 from app.reasoning import ILUReasoning
 from app.providers import create_provider
 from config.settings import ILUSettings
+from tools import create_tool_manager
 
 
 class ILUCore:
@@ -13,6 +14,7 @@ class ILUCore:
     - memoria
     - contexto
     - razonamiento
+    - herramientas
     - proveedor de IA
     """
 
@@ -24,6 +26,7 @@ class ILUCore:
         self.memory = MemoryStore()
         self.reasoning = ILUReasoning()
         self.provider = create_provider()
+        self.tools = create_tool_manager()
 
     def _next_memory_key(self):
         memories = self.memory.load_all()
@@ -171,18 +174,6 @@ class ILUCore:
         return results[:10]
 
     def _get_context(self, message):
-        """
-        Recupera contexto relevante para una conversación normal.
-
-        MemoryStore calcula un puntaje combinando:
-        - coincidencia
-        - importancia
-        - recencia
-
-        El Core conserva solamente los recuerdos
-        más relevantes para mantener I.L.U. ligera.
-        """
-
         words = [
             word.strip("¿?¡!,.:;()[]{}")
             for word in message.lower().split()
@@ -265,6 +256,29 @@ class ILUCore:
             "general"
         )
 
+    def _tool_request(self, message):
+        lowered = message.lower()
+
+        if (
+            "hora" in lowered
+            or "fecha" in lowered
+            or "qué hora es" in lowered
+            or "que hora es" in lowered
+        ):
+            return "system_time"
+
+        return None
+
+    def _execute_tool(self, message):
+        tool_name = self._tool_request(message)
+
+        if not tool_name:
+            return None
+
+        return self.tools.execute(
+            tool_name
+        )
+
     def process(self, message):
         if not isinstance(message, str):
             return {
@@ -317,6 +331,41 @@ class ILUCore:
                 "version": self.version
             }
 
+        tool_result = self._execute_tool(message)
+
+        if tool_result is not None:
+            if tool_result.get("success"):
+                result = tool_result.get("result", {})
+
+                if "datetime" in result:
+                    response = (
+                        "La fecha y hora de tu sistema es: "
+                        f"{result['datetime']}"
+                    )
+                else:
+                    response = str(result)
+
+                return {
+                    "success": True,
+                    "input": message,
+                    "intent": "tool_use",
+                    "tool": tool_result.get("tool"),
+                    "response": response,
+                    "tool_result": result,
+                    "core": self.name,
+                    "version": self.version
+                }
+
+            return {
+                "success": False,
+                "input": message,
+                "intent": "tool_use",
+                "tool": tool_result.get("tool"),
+                "error": tool_result.get("error"),
+                "core": self.name,
+                "version": self.version
+            }
+
         context = self._get_context(message)
 
         analysis = self.reasoning.analyze(
@@ -358,14 +407,21 @@ class ILUCore:
                 "context_used": reasoning.get(
                     "context_used",
                     0
+                ),
+                "complexity": reasoning.get(
+                    "complexity",
+                    "simple"
+                ),
+                "plan": reasoning.get(
+                    "plan",
+                    []
                 )
             },
             "provider": {
                 "name": self.provider.name,
                 "version": self.provider.version
             },
+            "tools": self.tools.list_tools(),
             "core": self.name,
             "version": self.version
         }
-
-

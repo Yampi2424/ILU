@@ -251,6 +251,21 @@ class ILUCore:
 
         return None
 
+    def _available_tools(self):
+        return self.tools.list_tools()
+
+    def _tool_capabilities(self):
+        capabilities = []
+
+        for tool in self._available_tools():
+            capabilities.append({
+                "name": tool["name"],
+                "description": tool["description"],
+                "permission": tool["permission"]
+            })
+
+        return capabilities
+
     def _execute_planned_action(self, message, plan):
         if "ejecutar_accion" not in plan:
             return None
@@ -421,7 +436,7 @@ class ILUCore:
                 "name": self.provider.name,
                 "version": self.provider.version
             },
-            "tools": self.tools.list_tools(),
+            "tools": self._tool_capabilities(),
             "core": self.name,
             "version": self.version
         }

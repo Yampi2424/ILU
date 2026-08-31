@@ -9,13 +9,8 @@ class ILUCore:
     """
     Núcleo central de I.L.U.
 
-    Coordina:
-    - procesamiento
-    - memoria
-    - contexto
-    - razonamiento
-    - herramientas
-    - proveedor de IA
+    Flujo:
+    entrada -> memoria -> razonamiento -> plan -> herramienta -> respuesta
     """
 
     def __init__(self):
@@ -166,11 +161,6 @@ class ILUCore:
                 if item not in results:
                     results.append(item)
 
-        results.sort(
-            key=lambda item: item.get("score", 0),
-            reverse=True
-        )
-
         return results[:10]
 
     def _get_context(self, message):
@@ -183,27 +173,19 @@ class ILUCore:
         if not words:
             return []
 
-        candidates = []
+        results = []
 
         for word in words[:6]:
             found = self.memory.search(
                 word,
-                limit=5
+                limit=3
             )
 
             for item in found:
-                if item not in candidates:
-                    candidates.append(item)
+                if item not in results:
+                    results.append(item)
 
-        candidates.sort(
-            key=lambda item: (
-                item.get("score", 0),
-                item.get("importance", 5)
-            ),
-            reverse=True
-        )
-
-        return candidates[:5]
+        return results[:5]
 
     def _format_memories(self, memories):
         if not memories:
@@ -256,7 +238,7 @@ class ILUCore:
             "general"
         )
 
-    def _tool_request(self, message):
+    def _identify_tool(self, message):
         lowered = message.lower()
 
         if (
@@ -269,15 +251,26 @@ class ILUCore:
 
         return None
 
-    def _execute_tool(self, message):
-        tool_name = self._tool_request(message)
-
-        if not tool_name:
+    def _execute_planned_action(self, message, plan):
+        if "ejecutar_accion" not in plan:
             return None
 
-        return self.tools.execute(
-            tool_name
-        )
+        tool_name = self._identify_tool(message)
+
+        if not tool_name:
+            return {
+                "success": False,
+                "error": "no_matching_tool"
+            }
+
+        if not self.tools.has_tool(tool_name):
+            return {
+                "success": False,
+                "error": "tool_not_available",
+                "tool": tool_name
+            }
+
+        return self.tools.execute(tool_name)
 
     def process(self, message):
         if not isinstance(message, str):
@@ -331,41 +324,6 @@ class ILUCore:
                 "version": self.version
             }
 
-        tool_result = self._execute_tool(message)
-
-        if tool_result is not None:
-            if tool_result.get("success"):
-                result = tool_result.get("result", {})
-
-                if "datetime" in result:
-                    response = (
-                        "La fecha y hora de tu sistema es: "
-                        f"{result['datetime']}"
-                    )
-                else:
-                    response = str(result)
-
-                return {
-                    "success": True,
-                    "input": message,
-                    "intent": "tool_use",
-                    "tool": tool_result.get("tool"),
-                    "response": response,
-                    "tool_result": result,
-                    "core": self.name,
-                    "version": self.version
-                }
-
-            return {
-                "success": False,
-                "input": message,
-                "intent": "tool_use",
-                "tool": tool_result.get("tool"),
-                "error": tool_result.get("error"),
-                "core": self.name,
-                "version": self.version
-            }
-
         context = self._get_context(message)
 
         analysis = self.reasoning.analyze(
@@ -373,9 +331,55 @@ class ILUCore:
             context
         )
 
+        if not analysis.get("success"):
+            return analysis
+
         reasoning = self.reasoning.respond(
             analysis
         )
+
+        plan = reasoning.get("plan", [])
+
+        tool_result = self._execute_planned_action(
+            message,
+            plan
+        )
+
+        if tool_result and tool_result.get("success"):
+            result = tool_result.get("result", {})
+
+            if "datetime" in result:
+                response = (
+                    "La fecha y hora de tu sistema es: "
+                    f"{result['datetime']}"
+                )
+            else:
+                response = str(result)
+
+            self._save_memory(
+                message,
+                memory_type="conversation",
+                importance=3
+            )
+
+            return {
+                "success": True,
+                "input": message,
+                "intent": "tool_use",
+                "response": response,
+                "tool": tool_result.get("tool"),
+                "tool_result": result,
+                "reasoning": {
+                    "type": reasoning.get("reasoning_type"),
+                    "complexity": reasoning.get(
+                        "complexity",
+                        "simple"
+                    ),
+                    "plan": plan
+                },
+                "core": self.name,
+                "version": self.version
+            }
 
         basic_response, intent = self._basic_response(
             message
@@ -383,7 +387,6 @@ class ILUCore:
 
         if basic_response:
             response = basic_response
-
         else:
             response = self.provider.generate(
                 message,
@@ -412,10 +415,7 @@ class ILUCore:
                     "complexity",
                     "simple"
                 ),
-                "plan": reasoning.get(
-                    "plan",
-                    []
-                )
+                "plan": plan
             },
             "provider": {
                 "name": self.provider.name,

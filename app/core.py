@@ -2,7 +2,7 @@ from memory.store import MemoryStore
 from app.reasoning import ILUReasoning
 from app.providers import create_provider
 from config.settings import ILUSettings
-from tools import create_tool_manager
+from tools import create_tool_manager, ToolCall
 
 
 class ILUCore:
@@ -266,26 +266,36 @@ class ILUCore:
 
         return capabilities
 
-    def _execute_planned_action(self, message, plan):
+    def _create_tool_call(self, message, plan):
         if "ejecutar_accion" not in plan:
             return None
 
         tool_name = self._identify_tool(message)
 
         if not tool_name:
-            return {
-                "success": False,
-                "error": "no_matching_tool"
-            }
+            return None
 
-        if not self.tools.has_tool(tool_name):
+        return ToolCall(
+            tool=tool_name,
+            arguments={},
+            reason="La solicitud requiere una herramienta disponible."
+        )
+
+    def _execute_tool_call(self, tool_call):
+        if tool_call is None:
+            return None
+
+        if not self.tools.has_tool(tool_call.tool):
             return {
                 "success": False,
                 "error": "tool_not_available",
-                "tool": tool_name
+                "tool": tool_call.tool
             }
 
-        return self.tools.execute(tool_name)
+        return self.tools.execute(
+            tool_call.tool,
+            **tool_call.arguments
+        )
 
     def process(self, message):
         if not isinstance(message, str):
@@ -355,9 +365,13 @@ class ILUCore:
 
         plan = reasoning.get("plan", [])
 
-        tool_result = self._execute_planned_action(
+        tool_call = self._create_tool_call(
             message,
             plan
+        )
+
+        tool_result = self._execute_tool_call(
+            tool_call
         )
 
         if tool_result and tool_result.get("success"):
@@ -383,6 +397,11 @@ class ILUCore:
                 "intent": "tool_use",
                 "response": response,
                 "tool": tool_result.get("tool"),
+                "tool_call": (
+                    tool_call.to_dict()
+                    if tool_call
+                    else None
+                ),
                 "tool_result": result,
                 "reasoning": {
                     "type": reasoning.get("reasoning_type"),

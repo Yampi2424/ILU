@@ -1,3 +1,4 @@
+import json
 import os
 
 try:
@@ -13,9 +14,9 @@ class AIProvider:
 
     def __init__(self):
         self.name = "base"
-        self.version = "0.2.0"
+        self.version = "0.5.0"
 
-    def generate(self, message, context=None):
+    def generate(self, message, context=None, tools=None):
         raise NotImplementedError(
             "El proveedor debe implementar generate()"
         )
@@ -23,64 +24,60 @@ class AIProvider:
 
 class LocalProvider(AIProvider):
     """
-    Proveedor de IA local mediante Ollama.
-    Optimizado para equipos con recursos limitados.
+    Proveedor local mediante Ollama.
+
+    Puede generar respuestas normales y recibir
+    información estructurada sobre las herramientas
+    disponibles.
     """
 
     def __init__(self):
         super().__init__()
 
         self.name = "ollama"
-        self.version = "0.4.0"
+        self.version = "0.5.0"
 
         self.model = os.environ.get(
             "ILU_LOCAL_MODEL",
             "qwen2.5:0.5b-instruct"
         )
 
-        self.host = os.environ.get(
-            "OLLAMA_HOST",
-            "http://127.0.0.1:11434"
-        )
-
-        self.client = None
-
-        if ollama is not None:
-            self.client = ollama.Client(
-                host=self.host,
-                timeout=300
-            )
-
-    def generate(self, message, context=None):
+    def _build_prompt(self, message, context, tools):
         context = context or []
-
-        if self.client is None:
-            return (
-                "I.L.U. no puede utilizar el modelo local "
-                "porque el cliente Ollama no está instalado."
-            )
-
-        context_text = ""
-
-        for item in context:
-            if isinstance(item, dict):
-                content = item.get("content")
-
-                if content:
-                    context_text += f"- {content}\n"
+        tools = tools or []
 
         prompt = (
             "Eres I.L.U., Inteligencia Local Unificada.\n"
-            "Eres el cerebro local de una arquitectura de "
-            "inteligencia ligera.\n"
-            "Responde siempre en español.\n"
-            "Sé clara, directa y útil.\n\n"
+            "Responde en español de forma clara, directa y útil.\n"
+            "No inventes herramientas ni acciones.\n\n"
         )
 
-        if context_text:
+        if context:
+            prompt += "Memoria relevante:\n"
+
+            for item in context:
+                content = item.get("content")
+
+                if content:
+                    prompt += f"- {content}\n"
+
+            prompt += "\n"
+
+        if tools:
+            prompt += "Herramientas disponibles:\n"
+
+            for tool in tools:
+                prompt += (
+                    f"- {tool.get('name')}: "
+                    f"{tool.get('description')}\n"
+                )
+
             prompt += (
-                "Contexto recuperado de la memoria:\n"
-                f"{context_text}\n"
+                "\nSi necesitas una herramienta, responde "
+                "EXACTAMENTE con JSON usando este formato:\n"
+                '{"tool":"nombre","arguments":{},"reason":"motivo"}\n\n'
+                "Si no necesitas una herramienta, responde "
+                "normalmente en español.\n\n"
             )
 
         prompt += (
@@ -89,28 +86,88 @@ class LocalProvider(AIProvider):
             "Respuesta:"
         )
 
+        return prompt
+
+    def _extract_tool_call(self, content):
+        if not content:
+            return None
+
+        text = content.strip()
+
         try:
-            result = self.client.chat(
+            data = json.loads(text)
+
+            if (
+                isinstance(data, dict)
+                and isinstance(data.get("tool"), str)
+                and isinstance(data.get("arguments"), dict)
+            ):
+                return {
+                    "tool": data["tool"],
+                    "arguments": data["arguments"],
+                    "reason": data.get("reason", "")
+                }
+
+        except json.JSONDecodeError:
+            pass
+
+        return None
+
+    def generate(self, message, context=None, tools=None):
+        if ollama is None:
+            return {
+                "type": "text",
+                "content": (
+                    "I.L.U. está preparada para utilizar "
+                    "un modelo local, pero Ollama no está instalado."
+                )
+            }
+
+        prompt = self._build_prompt(
+            message,
+            context,
+            tools
+        )
+
+        try:
+            result = ollama.chat(
                 model=self.model,
                 messages=[
                     {
                         "role": "user",
                         "content": prompt
                     }
-                ],
-                options={
-                    "num_ctx": 4096,
-                    "temperature": 0.7
-                }
+                ]
             )
 
-            return result["message"]["content"].strip()
+            content = result["message"]["content"].strip()
+
+            tool_call = self._extract_tool_call(
+                content
+            )
+
+            if tool_call:
+                return {
+                    "type": "tool_call",
+                    "tool": tool_call["tool"],
+                    "arguments": tool_call["arguments"],
+                    "reason": tool_call["reason"]
+                }
+
+            return {
+                "type": "text",
+                "content": content
+            }
 
         except Exception as error:
-            return (
-                "I.L.U. no pudo obtener respuesta del modelo local. "
-                f"Detalle: {error}"
-            )
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo obtener respuesta "
+                    "del modelo local."
+                ),
+                "detail": str(error)
+            }
 
 
 class CloudProvider(AIProvider):
@@ -122,13 +179,16 @@ class CloudProvider(AIProvider):
         super().__init__()
 
         self.name = "cloud"
-        self.version = "0.2.0"
+        self.version = "0.5.0"
 
-    def generate(self, message, context=None):
-        return (
-            "El proveedor cloud está preparado para "
-            "incorporar un modelo de inteligencia."
-        )
+    def generate(self, message, context=None, tools=None):
+        return {
+            "type": "text",
+            "content": (
+                "El proveedor cloud está preparado para "
+                "incorporar un modelo de inteligencia."
+            )
+        }
 
 
 def create_provider():

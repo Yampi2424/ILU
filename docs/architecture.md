@@ -579,3 +579,48 @@ autonomía, registrarse ni activar emergencias (testeado
 - Un solo hilo de conversación por sesión (sin ramas); los subagentes
   (Bloque 7) usan su propio historial fresco, no el de la sesión padre.
 - Sin frontend/UX web de conversaciones.
+
+## Bloque 11 · JSON-schema por herramienta + validación
+
+### Qué se construyó
+
+- **Esquema declarativo por herramienta** — `ToolManager.register` acepta
+  un `schema` (JSON-schema) opcional por tool. `get_schema(name)` lo
+  expone y `list_tools_full()` lo incluye (sin alterar `list_tools()`,
+  que preserva el contrato público de Bloques 1–10).
+- **`openai_functions()` emite `parameters` reales** — si la tool declara
+  `schema`, el array `tools` nativo lleva ese JSON-schema; si no, se
+  mantiene `properties: {}` (retrocompatible con el Bloque 9).
+- **Validación fail-closed** — `validate_arguments(schema, arguments)`
+  en `app/toolshape.py`: comprueba `required` y tipos
+  (string/boolean/integer/number). Se invoca en `_execute_tool_call`
+  ANTES de la compuerta y de ejecutar: unos argumentos inválidos se
+  rechazan de forma honesta sin tocar el handler; una tool sin esquema
+  siempre pasa.
+- **Esquemas del panel** — `system_time`, `web_search` (query required),
+  `read_file` (path required), `notify` (message required) y `write_file`
+  (path+content required) declaran su esquema.
+
+### Archivos
+
+- **Nuevos**: `tests/test_tool_schema.py`, `tests/test_tool_validation.py`
+- **Modificados**: `app/toolshape.py`, `app/core.py`, `tools/manager.py`,
+  `tools/__init__.py`, `docs/architecture.md`
+- **Intactos**: `app/providers.py`, `app/__main__.py`, `security/`
+  (SecurityGate/Authority/AuditLog), `memory/`, contratos HTTP.
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **382 passed** (19 nuevos del Bloque 11; cero
+  regresiones sobre Bloques 1–10).
+- Retrocompatibilidad verificada: `list_tools()` público sin cambios;
+  tool sin esquema emite `properties: {}` y se ejecuta sin bloqueo.
+
+### Limitaciones / PLANIFICADO
+
+- Validación de tipos básicos (string/integer/number/boolean); sin
+  `enum`, `pattern`, `minimum` ni anidación profunda (PLANIFICADO).
+- La validación es sintáctica; la semántica de los valores la decide la
+  tool al ejecutar.
+- El esquema se emite igual para Ollama y OmniRoute (mismo wire-format).

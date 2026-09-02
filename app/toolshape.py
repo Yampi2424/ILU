@@ -44,7 +44,10 @@ def openai_functions(tools):
 
         function = {
             "name": name,
-            "parameters": {"type": "object", "properties": {}}
+            # Bloque 11: si la tool declara un JSON-schema (campo
+            # "schema"), se emite tal cual; si no, se mantiene el objeto
+            # vacío (retrocompatible con el Bloque 9).
+            "parameters": _schema_or_empty(tool)
         }
 
         description = tool.get("description")
@@ -55,6 +58,95 @@ def openai_functions(tools):
         out.append({"type": "function", "function": function})
 
     return out
+
+
+def _schema_or_empty(tool):
+    """
+    Devuelve el JSON-schema de la tool, o un objeto vacío si no tiene.
+
+    El esquema, si existe, DEBE ser un objeto; cualquier otro valor se
+    descarta para no enviar JSON inválido al proveedor.
+    """
+    schema = tool.get("schema")
+
+    if isinstance(schema, dict) and schema:
+        return schema
+
+    return {"type": "object", "properties": {}}
+
+
+# Tipos JSON-schema que I.L.U. entiende y cómo comprobarlos.
+_VALIDATORS = {
+    "string": lambda value: isinstance(value, str),
+    "boolean": lambda value: isinstance(value, bool),
+    "integer": lambda value: (
+        isinstance(value, int)
+        and not isinstance(value, bool)
+    ),
+    "number": lambda value: (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+    ),
+}
+
+
+def validate_arguments(schema, arguments):
+    """
+    Valida `arguments` contra un JSON-schema básico (Bloque 11).
+
+    Soporta: type=object, `required` y `properties` con tipos
+    string/boolean/integer/number. Devuelve (ok, error): ok=True si los
+    argumentos pasan; si no, ok=False con un error legible para rechazar
+    de forma honesta (fail-closed) sin ejecutar.
+
+    Una tool SIN esquema (o con esquema no-objeto) siempre pasa: no hay
+    nada que validar (retrocompatibilidad).
+    """
+    if not isinstance(schema, dict) or not schema:
+        return True, ""
+
+    if not isinstance(arguments, dict):
+        return (
+            False,
+            "arguments_must_be_object"
+        )
+
+    # 1) Propiedades requeridas.
+    required = schema.get("required", [])
+
+    if isinstance(required, list):
+        for prop in required:
+            if prop not in arguments:
+                return (
+                    False,
+                    f"missing_required_argument:{prop}"
+                )
+
+    # 2) Tipos de las propiedades presentes.
+    properties = schema.get("properties", {})
+
+    if not isinstance(properties, dict):
+        properties = {}
+
+    for name, value in arguments.items():
+        prop_schema = properties.get(name)
+
+        if not isinstance(prop_schema, dict):
+            # Propiedad no declarada en el esquema: se tolera (no se
+            # rechaza por ser estricto; la tool decide al ejecutar).
+            continue
+
+        prop_type = prop_schema.get("type")
+
+        validator = _VALIDATORS.get(prop_type)
+
+        if validator is not None and not validator(value):
+            return (
+                False,
+                f"invalid_argument_type:{name}"
+            )
+
+    return True, ""
 
 
 def _as_dict(raw):

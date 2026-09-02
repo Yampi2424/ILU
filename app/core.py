@@ -1,6 +1,7 @@
 from memory.router import MemoryRouter
 from memory.conversations import ConversationStore
 from app.reasoning import ILUReasoning
+from app import toolshape
 from app.providers import create_runtime_provider
 from app.security import SecurityGate
 from app.audit import AuditLog
@@ -362,7 +363,10 @@ class ILUCore:
         )
 
     def _available_tools(self):
-        return self.tools.list_tools()
+        # Bloque 11: lista completa (con JSON-schema) para que el proveedor
+        # reciba los `parameters` reales. `list_tools()` (público,
+        # retrocompatible) no cambia.
+        return self.tools.list_tools_full()
 
     def _tool_capabilities(self):
         capabilities = []
@@ -1315,6 +1319,32 @@ class ILUCore:
                 "success": False,
                 "error": "tool_not_available",
                 "tool": tool_call.tool
+            }
+
+        # Bloque 11: se valida el esquema ANTES de pasar por la compuerta y
+        # de ejecutar. Unos argumentos inválidos se rechazan de forma
+        # honesta (fail-closed); una tool sin esquema siempre pasa
+        # (retrocompatibilidad).
+        schema_ok, schema_error = toolshape.validate_arguments(
+            self.tools.get_schema(tool_call.tool),
+            tool_call.arguments
+        )
+
+        if not schema_ok:
+            self.audit.record(
+                actor="ilu",
+                action="tool_attempt",
+                tool=tool_call.tool,
+                decision="deny",
+                mode=mode,
+                reason=schema_error
+            )
+
+            return {
+                "success": False,
+                "error": schema_error,
+                "tool": tool_call.tool,
+                "validation": "failed"
             }
 
         permission = self.tools.get_permission(

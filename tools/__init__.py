@@ -28,7 +28,11 @@ def create_tool_manager():
         name="system_time",
         description="Consultar la fecha y hora del sistema.",
         handler=get_system_time,
-        permission="safe"
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {},
+        }
     )
 
     manager.register(
@@ -38,7 +42,21 @@ def create_tool_manager():
             "(DuckDuckGo Instant Answers)."
         ),
         handler=web_search,
-        permission="safe"
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Términos de búsqueda."
+                },
+                "max_results": {
+                    "type": "integer",
+                    "description": "Máximo de resultados (1-10)."
+                }
+            },
+            "required": ["query"]
+        }
     )
 
     manager.register(
@@ -48,14 +66,40 @@ def create_tool_manager():
             "(ILU_WORKSPACE)."
         ),
         handler=read_file,
-        permission="safe"
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Ruta del archivo, relativa al workspace."
+                    )
+                }
+            },
+            "required": ["path"]
+        }
     )
 
     manager.register(
         name="notify",
         description="Dejar una notificación local dirigida al usuario.",
         handler=_notify,
-        permission="safe"
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "Texto de la notificación."
+                },
+                "level": {
+                    "type": "string",
+                    "description": "Nivel: info, warning o error."
+                }
+            },
+            "required": ["message"]
+        }
     )
 
     manager.register(
@@ -65,7 +109,29 @@ def create_tool_manager():
             "Requiere autorización humana."
         ),
         handler=write_file,
-        permission="ask"
+        permission="ask",
+        schema={
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": (
+                        "Ruta del archivo, relativa al workspace."
+                    )
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Contenido a escribir."
+                },
+                "append": {
+                    "type": "boolean",
+                    "description": (
+                        "Si es true, añade en vez de reescribir."
+                    )
+                }
+            },
+            "required": ["path", "content"]
+        }
     )
 
     return manager

@@ -11,7 +11,21 @@ class ToolManager:
         self.version = "0.1.0"
         self.tools = {}
 
-    def register(self, name, description, handler, permission="safe"):
+    def register(
+        self,
+        name,
+        description,
+        handler,
+        permission="safe",
+        schema=None
+    ):
+        """
+        Registra una herramienta.
+
+        `schema` es opcional: un JSON-schema de los parámetros (Bloque 11)
+        que el modelo rellena. Si se omite, la herramienta sigue
+        funcionando igual (retrocompatible), con `properties` vacío.
+        """
         if not name:
             raise ValueError("tool_name_required")
 
@@ -22,15 +36,45 @@ class ToolManager:
             "name": name,
             "description": description,
             "handler": handler,
-            "permission": permission
+            "permission": permission,
+            "schema": schema or None
         }
 
+    def get_schema(self, name):
+        """Devuelve el JSON-schema de la herramienta, o None si no tiene."""
+        tool = self.tools.get(name)
+
+        if tool is None:
+            return None
+
+        return tool.get("schema")
+
     def list_tools(self):
+        """Lista pública (retrocompatible): name/description/permission."""
         return [
             {
                 "name": tool["name"],
                 "description": tool["description"],
                 "permission": tool["permission"]
+            }
+            for tool in self.tools.values()
+        ]
+
+    def list_tools_full(self):
+        """
+        Lista completa (Bloque 11): incluye el JSON-schema de cada tool.
+
+        El array `tools` que se envía al proveedor usa esta forma, de
+        modo que `openai_functions()` puede emitir los `parameters`
+        reales. No altera `list_tools()`, preservando la
+        retrocompatibilidad de la lista pública.
+        """
+        return [
+            {
+                "name": tool["name"],
+                "description": tool["description"],
+                "permission": tool["permission"],
+                "schema": tool.get("schema")
             }
             for tool in self.tools.values()
         ]

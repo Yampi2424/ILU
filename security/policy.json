@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "prohibited": [
+    "shell",
+    "kill_process",
+    "delete_workspace",
+    "modify_own_code",
+    "modify_policy",
+    "grant_self",
+    "elevate_autonomy"
+  ],
+  "fundamental_safety": [
+    "abort_immediate_hazard"
+  ],
+  "sensitivity": {
+    "system_time": "low",
+    "web_search": "low",
+    "read_file": "low",
+    "notify": "low",
+    "write_file": "high"
+  },
+  "auto_revoke_rules": [
+    {
+      "trigger": "risk_flag",
+      "capabilities": [
+        "write_file"
+      ],
+      "cooldown_seconds": 3600,
+      "revoke_reason": "riesgo detectado por regla predefinida"
+    }
+  ],
+  "defaults": {
+    "grant_duration": "1h",
+    "max_uses_default": null
+  },
+  "emergency_protocols": []
+}

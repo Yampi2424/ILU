@@ -42,3 +42,14 @@ temp/
 memory/data.json
 memory/audit.jsonl
 memory/tasks.json
+# Notificaciones locales de I.L.U. (tool notify)
+memory/notifications.jsonl
+
+# Local stores del sistema de autoridad (Bloque 8).
+# Ningún permiso, identidad, dispositivo, clave o solicitud se versiona.
+security/grants.jsonl
+security/principals.json
+security/emergency.json
+security/devices.json
+security/device.key
+security/requests.jsonl

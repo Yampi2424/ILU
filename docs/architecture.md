@@ -218,3 +218,248 @@ múltiples almacenes y futura sincronización entre ubicaciones.
   `apply_changes` ya está).
 - Pool de conexiones Postgres por operación.
 - Compresión de conversaciones antiguas → `episodic` → `semantic`.
+
+---
+
+## Bloque 6 · Panel de herramientas ejecutables
+
+Estado: **IMPLEMENTADO** (Bl. 6, 2026-09-01).
+
+### Qué se construyó
+
+Panel de 5 herramientas reales, todas pasando por `SecurityGate` (el LLM
+**propone**; la compuerta **decide**) y por `AuditLog`:
+
+| Herramienta | Permiso | Qué hace |
+|---|---|---|
+| `system_time` | `safe` | Fecha/hora del sistema (ya existía) |
+| `web_search` | `safe` | Búsqueda web ligera sin clave (DDG Instant Answers) |
+| `read_file` | `safe` | Lee un archivo de texto **dentro** del workspace |
+| `notify` | `safe` | Deja una notificación local dirigida al usuario (log JSONL) |
+| `write_file` | `ask` | Crea/reescribe un archivo — exige autorización humana |
+
+### Confinamiento
+
+- **Workspace**: toda lectura/escritura de archivos se resuelve contra
+  `ILU_WORKSPACE` (default: cwd) con `Path.resolve()` + `is_relative_to`.
+  Traversal (`../`, rutas absolutas fuera) → `path_outside_workspace`.
+- **write_file = ask**: aun en autonomía `autonomous`, sin registro de
+  autorización previa la compuerta se detiene (`ask`) y el handler JAMÁS se
+  ejecuta. No existe registro de autorizaciones aún (PLANIFICADO).
+- **web_search sin red** y **read_file rechazado** fallan de forma
+  **explícita** (`web_search_unavailable`, `path_outside_workspace`) — no se
+  oculta el fallo.
+
+### Despacho directo (sin LLM)
+
+`_identify_tool` reconoce por lenguaje natural y despacha de forma
+determinista las herramientas `safe` (evita coste/latencia del modelo):
+- "busca en internet [sobre] X" → `web_search`
+- "lee/muéstrame/abre el archivo X" → `read_file`
+- "notifícame/avísame/déjame una nota X" → `notify`
+
+Si el argumento obligatorio (query/path/message) falta o está vacío, no se
+despacha y se delega al modelo.
+
+### Cambio en ToolManager
+
+`ToolManager.execute` ahora **propaga** un fallo *funcional* que el handler
+devuelve como dict con `success: False` (antes lo envolvía como éxito).
+Motivo: la búsqueda sin red o una ruta fuera del workspace no son
+excepciones ni "éxito"; deben reportarse como fallo. Los fallos por
+excepción (`tool_execution_failed`) siguen igual.
+
+### Archivos
+
+- **Nuevos**: `tools/search.py`, `tools/filesystem.py`, `tools/notify.py`
+- **Modificados**: `tools/__init__.py` (5 registros + alias `_notify` para
+  no sombrear el submódulo), `tools/manager.py` (propagación de fallo),
+  `app/core.py` (`_identify_tool` + extracción de argumentos),
+  `.gitignore` (`memory/notifications.jsonl`)
+- **Tests nuevos**: `tests/test_tools_search.py`,
+  `tests/test_tools_filesystem.py`, `tests/test_tools_notify.py`,
+  `tests/test_tools_panel.py`
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **197 passed**
+- Smoke HTTP: `/healthz` OK; `/ask("hola")` → greeting con 5 tools
+  expuestas; `/ask("notifícame …")` → `tool_use`/`notify` y escribe
+  `memory/notifications.jsonl`.
+
+### Limitaciones / PLANIFICADO
+
+- Registro de **autorizaciones previas** (para que `ask` pueda concederse
+  una vez y recordarse) — PLANIFICADO.
+- `write_file` solo se prueba con proveedor fake (la ejecución real del
+  LLM requiere Ollama/red).
+- `web_search` usa solo Instant Answers (1 resultado); un buscador real es
+  PLANIFICADO.
+- `read_file` acota tamaño (200 KB) y `write_file` no limita aún tamaño.
+- Subagentes / sub-assistant anidado → **Bloque 7**.
+
+---
+
+## Bloque 7 · Sub-agentes y sub-assistant anidado
+
+Estado: **IMPLEMENTADO** (Bl. 7, 2026-09-01).
+
+### Qué se construyó
+
+Capacidad de I.L.U. para **delegar** una sub-tarea a un sub-assistant
+secuencial (`SubAgent`, `app/subagent.py`) que comparte el **mismo**
+proveedor, toolset, `SecurityGate` y `AuditLog` que el flujo principal.
+El modelo propone; la compuerta decide — dentro y fuera del sub-agente.
+
+### Reglas de seguridad (heredadas, nunca elevadas)
+
+- El `SubAgent` recibe **las mismas instancias** de `tools`/`security`/
+  `audit`/`memory` del padre (verificado por test).
+- Las tools propuestas por el sub-agente pasan por `SecurityGate` con
+  `mode="model"`: en autonomía `manual`, una tool `safe` propuesta por el
+  (sub)modelo se detiene en `ask`, igual que en el flujo principal.
+- Una tool `ask` (p. ej. `write_file`) se detiene en la compuerta; el
+  handler del sub-agente JAMÁS corre.
+- Cada tool del sub-agente se audita (`tool_attempt`/`tool_result`) y el
+  propio sub-agente se audita como acción `subagent`.
+
+### Detección flexible (no dependiente de frases exactas)
+
+`_subagent_task(message)` reconoce intención de delegación de dos formas,
+siempre exigiendo una **tarea no trivial** (≥ 12 caracteres) tras el
+marcador:
+
+1. **Frases explícitas**: "sub-agente", "sub-assistant", "encargá a",
+   "manejá esto", "investiga en paralelo", "delega esto"…
+2. **Tokens con frontera de palabra**: "delega"/"delegar"/"subagente"…
+   (no coincide dentro de "encargado" ni "delegado").
+
+Peticiones normales ("qué hora es", "busca en internet X", "hola") y
+verbos sueltos ("delega" sin tarea) NO disparan un sub-agente (testeado).
+
+### Bucle secuencial acotado
+
+Cada ronda consulta al modelo con contexto de trabajo; si propone una
+herramienta, se ejecuta vía la compuerta y el resultado se retroalimenta;
+termina en texto final, error, o **`max_rounds`** (default 3, configurable)
+→ `truncated: true`. Memoria separada: el sub-agente solo *lee* contexto
+tipo working/personal vía `MemoryRouter.recall_context` (no escribe en el
+hilo principal).
+
+### Archivos
+
+- **Nuevos**: `app/subagent.py`, `tests/test_subagent.py`
+- **Modificados**: `app/core.py` (stage 2.75 en `process()` +
+  `_subagent_task`/`_is_subagent_request`/`_run_subagent`)
+- **Intactos de forma deliberada**: `SecurityGate`, `AuditLog`,
+  `ToolManager` y todos los contratos del API (`/ask`, `/healthz`,
+  `/about`).
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **205 passed** (197 Bloques 1–6 + 8 nuevos del Bl. 7)
+- Smoke HTTP: `/healthz` OK; `/ask("hola")` → greeting con 5 tools.
+
+### Limitaciones / PLANIFICADO
+
+- Sub-agente **secuencial**: el paralelismo real de sub-agentes es
+  PLANIFICADO.
+- La detección exige una tarea descripta (al menos 12 caracteres): "manejá
+  esto por favor" sin tarea NO dispara un sub-agente.
+- Sin historial multi-turno persistido para el sub-agente (contexto fresco
+  por delegación, propósito).
+- Sin límite de rondas LLM dentro de una ronda de herramienta (un solo
+  tool_call por ronda).
+
+## Bloque 8 · Autoridad, permisos y autonomía gobernada
+
+**Principio rector: *la inteligencia propone, la Autoridad decide, y solo
+se ejecuta con autoridad.*** La respuesta de un LLM NUNCA equivale a
+permiso de ejecución; toda herramienta pasa por `SecurityGate`, y nada de
+eso puede concederse a sí mismo.
+
+### Qué se construyó
+
+Capas del sistema de autoridad (`security/`), de abajo a arriba:
+
+- **`PrincipalRegistry`** — quién es el OWNER (autoridad raíz, de
+  `ILU_OWNER_ID`). Solo `owner`/`family_root` son `ROOT_TYPES`.
+- **`Policy`** — reglas separadas del código en `security/policy.json`
+  (acciones prohibidas, sensibilidad, duración por defecto).
+- **`GrantStore`** — autorizaciones explícitas, auditable, JSONL
+  gitignored. Default **no permanente** (single_action = 1 uso).
+- **`DeviceRegistry`** — dispositivos autorizados con challenge-response
+  **HMAC-SHA256** (stdlib; ruta de ascenso a asimétrico documentada).
+- **`EmergencyRegistry`** — solo protocolos **predefinidos** en policy,
+  que la raíz activa/desactiva.
+- **`SpoofingGuard`** — contador de fallos de verificación en ventana;
+  marca sospecha al superar el umbral (capa de señal, audita incidentes).
+- **`AuthorizationRequestStore`** — solicitudes reversibles; con
+  `AuthorizationRequired`, una tarea se PAUSA y espera.
+- **`Authority`** — **única** capa que concede/revoca permisos, cambia la
+  autonomía, registra dispositivos y activa emergencias. JAMÁS se inyecta
+  a la inteligencia, tools ni subagentes.
+- **`SecurityGate`** — el ÚNICO punto de enforcement, extendido de forma
+  retrocompatible: consulta acciones prohibidas, emergencias, grants
+  activos y sospecha de spoofing.
+
+### Modo de operación
+
+- `manual` → decide `ask` ante cualquier tool ejecutable (siempre pide).
+- `assisted` (default) → la compuerta pide si hace falta; un grant activo
+  auto-aprueba.
+- `autonomous` → un grant activo auto-aprueba; sin grant sigue pidiendo
+  (jamás se autoconcede).
+
+Los grants auto-aprueban SOLO en `assisted`/`autonomous`. En `manual` un
+grant no basta: la autonomía manda.
+
+### Subagentes
+
+Heredan el contexto de autorización del padre (consultan el MISMO
+`grant_store`; los grants de un solo uso se consumen compartidos) pero
+**NUNCA** reciben `Authority` — no pueden concederse, revocar, elevar la
+autonomía, registrarse ni activar emergencias (testeado
+`test_subagent_authority_isolation.py`).
+
+### Frontend por lenguaje natural y HTTP
+
+- `POST /ask`: "autoriza X", "revoca X", "estado de permisos", "cambia la
+  autonomía a asistido/autónomo/manual" (solo root; X prohibido se
+  rechaza). El nivel concedido es SIEMPRE `execution`.
+- `GET /security`, `GET /grants`, `GET /policy`,
+  `GET /authorization-requests`; `POST /grants`,
+  `POST /authorization-requests/{id}`, `POST /autonomy`.
+
+### Archivos
+
+- **Nuevos**: `security/` (11 módulos + `policy.json`),
+  `tests/test_authority.py`, `test_grant_store.py`, `test_principal.py`,
+  `test_policy.py`, `test_emergency.py`, `test_device.py`,
+  `test_spoofing.py`, `test_authorization_request.py`,
+  `test_security_gate_grants.py`, `test_task_authorization.py`,
+  `test_core_authorization_nl.py`,
+  `test_subagent_authority_isolation.py`
+- **Modificados**: `app/core.py`, `app/__main__.py`, `app/security.py`,
+  `app/subagent.py`, `config/settings.py`, `tasks/manager.py`,
+  `tests/conftest.py`, `.gitignore`
+- **Intactos**: contratos del API (`/ask`, `/healthz`, `/about`).
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **333 passed** (incluye los 12 archivos nuevos del
+  Bloque 8; sin regresiones sobre Bloques 1–7).
+- Smoke HTTP: grant, change de autonomía y rechazo de acción prohibida OK.
+
+### Limitaciones / PLANIFICADO
+
+- HMAC-SHA256 (simétrico) en device auth; ascenso documentado a
+  firma asimétrica (Ed25519).
+- El spoofing es una capa de señal: la decisión final la toma la compuerta.
+- Requests nunca compiladas no se purgan automáticamente (happy path por
+  ahora); la política de retención es PLANIFICADO.
+- Registro/verificación de dispositivos y protocolos de emergencia
+  implementados; la UX web para los mismos es PLANIFICADO.

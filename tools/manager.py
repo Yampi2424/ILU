@@ -66,6 +66,21 @@ class ToolManager:
         try:
             result = tool["handler"](**kwargs)
 
+            # Un handler que devuelve un dict con success False reporta un
+            # fallo FUNCIONAL (no una excepción): se propaga para no
+            # ocultar el fallo (p. ej. búsqueda web sin red o ruta fuera
+            # del workspace).
+            if (
+                isinstance(result, dict)
+                and result.get("success") is False
+            ):
+                return {
+                    "success": False,
+                    "tool": name,
+                    "error": result.get("error", "tool_failed"),
+                    "result": result
+                }
+
             return {
                 "success": True,
                 "tool": name,

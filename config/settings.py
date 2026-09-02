@@ -58,6 +58,50 @@ class ILUSettings:
             "memory/tasks.json"
         )
 
+        # ---- Bloque 8: sistema de autoridad / permisos ----
+        # Unica variable que I.L.U. necesita conocer del mundo humano:
+        # quién es el OWNER (autoridad raíz) en este dispositivo.
+        self.owner_id = os.environ.get(
+            "ILU_OWNER_ID",
+            "owner"
+        )
+
+        # Rutas de los almacenes de seguridad (locales, gitignored).
+        self.grants_path = os.environ.get(
+            "ILU_GRANTS_PATH",
+            "security/grants.jsonl"
+        )
+
+        self.policy_path = os.environ.get(
+            "ILU_POLICY_PATH",
+            "security/policy.json"
+        )
+
+        self.principals_path = os.environ.get(
+            "ILU_PRINCIPALS_PATH",
+            "security/principals.json"
+        )
+
+        self.emergency_path = os.environ.get(
+            "ILU_EMERGENCY_PATH",
+            "security/emergency.json"
+        )
+
+        self.authreq_path = os.environ.get(
+            "ILU_AUTHREQ_PATH",
+            "security/requests.jsonl"
+        )
+
+        self.devices_path = os.environ.get(
+            "ILU_DEVICES_PATH",
+            "security/devices.json"
+        )
+
+        self.device_key_path = os.environ.get(
+            "ILU_DEVICE_KEY",
+            "security/device.key"
+        )
+
     @property
     def is_cloud(self):
         return self.environment == "production"
@@ -78,5 +122,7 @@ class ILUSettings:
                 "configured"
                 if self.has_database
                 else "local"
-            )
+            ),
+            "owner": self.owner_id,
+            "security": "enabled",
         }

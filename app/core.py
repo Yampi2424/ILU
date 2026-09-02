@@ -6,6 +6,19 @@ from app.audit import AuditLog
 from config.settings import ILUSettings
 from tools import create_tool_manager, ToolCall
 from tasks import TaskManager
+from app.subagent import SubAgent
+
+# ---- Bloque 8: sistema de autoridad, permisos y autonomía gobernada ----
+from security.grant_store import GrantStore
+from security.principal import PrincipalRegistry
+from security.policy import Policy
+from security.emergency import EmergencyRegistry
+from security.device import DeviceRegistry
+from security.authority import Authority
+from security.spoofing import SpoofingGuard
+from security.authorization_request import (
+    AuthorizationRequestStore,
+)
 
 # Palabras vacías en español: se descartan como candidatas de búsqueda
 # para no inundar la memoria. El resto de tokens (incluso cortos como
@@ -18,6 +31,25 @@ _MEMORY_STOPWORDS = {
     "esta", "este", "estos", "estas", "hay", "no", "si", "sí", "ya",
     "fue", "era", "más", "mas", "muy", "bien", "puedes",
 }
+
+# Detección de delegación a un sub-agente (Bloque 7).
+#
+# Frases explícitas de delegación (con frontera de frase) y tokens sueltos
+# (con frontera de palabra, para no coincidir dentro de "encargado" o
+# "delegado"). En ambos casos se exige además una tarea no trivial: un verbo
+# suelto ("delega") o una petición normal ("qué hora es") NO disparan un
+# sub-agente.
+_SUBAGENT_PHRASES = (
+    "sub-agente", "sub agente", "sub-assistant", "sub assistant",
+    "encargá a", "encarga a", "encargá esto", "encarga esto",
+    "manejá esto", "maneja esto", "manejalo", "manejalo",
+    "investigá en paralelo", "investiga en paralelo",
+    "delegá esto", "delega esto", "delegar esto", "delegar a",
+)
+_SUBAGENT_TOKENS = (
+    "subagente", "subagentes", "subassistant",
+    "delegá", "delega", "delegar", "delegación", "delegacion",
+)
 
 
 class ILUCore:
@@ -47,6 +79,56 @@ class ILUCore:
         self.security = SecurityGate()
         self.audit = AuditLog()
         self.tasks = TaskManager(path=self.settings.tasks_path)
+
+        # ---- Bloque 8: autoridad, permisos, autonomía gobernada ----
+        #
+        # Capas (de abajo a arriba, una única puerta de enforcement):
+        #
+        #     PrincipalRegistry (quién es el owner/autoridades raíz)
+        #     Policy           (reglas separadas del código)
+        #     GrantStore       (autorizaciones explícitas persistentes)
+        #     DeviceRegistry   (dispositivos autorizados, HMAC challenge)
+        #     EmergencyRegistry(protocolos previamente definidos)
+        #     SpoofingGuard    (detección de suplantación de identidad)
+        #     Authority        (única que concede/revoca/cambia autonomía)
+        #
+        # y SecurityGate (la compuerta) consulta todo lo anterior SIN darle
+        # jamás a I.L.U. la capacidad de autoconcederse permisos: Authority
+        # no se inyecta a la inteligencia, solo auxilia al core cuando un
+        # principal humano ordena una concesión/revocación.
+
+        self.policy = Policy(path=self.settings.policy_path)
+        self.principals = PrincipalRegistry(
+            path=self.settings.principals_path,
+            owner_id=self.settings.owner_id,
+        )
+        self.grant_store = GrantStore(
+            path=self.settings.grants_path
+        )
+        self.emergency = EmergencyRegistry(
+            policy=self.policy,
+            path=self.settings.emergency_path,
+        )
+        self.devices = DeviceRegistry(
+            path=self.settings.devices_path
+        )
+        self.auth_requests = AuthorizationRequestStore(
+            path=self.settings.authreq_path
+        )
+        self.spoofing = SpoofingGuard(audit=self.audit)
+
+        # Authority conoce a la compuerta para gobernar la autonomía;
+        # nunca al revés (la compuerta solo decide según grants/reglas).
+        self.authority = Authority(
+            grant_store=self.grant_store,
+            principals=self.principals,
+            audit=self.audit,
+            emergency=self.emergency,
+            devices=self.devices,
+            policy=self.policy,
+            gate=self.security,
+            requests=self.auth_requests,
+        )
 
     def _next_memory_key(self):
         memories = self.memory.load_all()
@@ -285,12 +367,144 @@ class ILUCore:
 
         return capabilities
 
+    # ------------------------------------------------------------------
+    # Sub-agente / sub-assistant anidado (Bloque 7)
+    # ------------------------------------------------------------------
+
+    def _subagent_task(self, message):
+        """
+        Extrae la tarea a delegar, o None si el mensaje no es una
+        delegación clara.
+
+        Detección flexible pero conservadora:
+        - frases explícitas de delegación (p. ej. "encargá a un
+          subagente", "delegar esto", "manejá esto");
+        - tokens de delegación con frontera de palabra ("delega",
+          "subagente"), sin coincidir dentro de "encargado"/"delegado";
+        - se exige una tarea no trivial (>= 12 caracteres) para no
+          disparar con "delega" suelto ni con peticiones normales.
+        """
+        if not isinstance(message, str):
+            return None
+
+        lowered = message.lower()
+
+        # 1) Frases explícitas (multipalabra o con guion).
+        for phrase in _SUBAGENT_PHRASES:
+            if phrase in lowered:
+                index = lowered.find(phrase)
+                task = (
+                    message[:index]
+                    + message[index + len(phrase):]
+                ).strip(" ,:;.¿?¡!-\n")
+
+                if len(task) >= 12:
+                    return task
+
+        # 2) Tokens de delegación con frontera de palabra.
+        tokens = {
+            token.strip("¿?¡!,.:;")
+            for token in lowered.split()
+        }
+
+        for token in _SUBAGENT_TOKENS:
+            if token in tokens:
+                index = lowered.find(token)
+                task = (
+                    message[:index]
+                    + message[index + len(token):]
+                ).strip(" ,:;.¿?¡!-\n")
+
+                if len(task) >= 12:
+                    return task
+
+        return None
+
+    def _is_subagent_request(self, message):
+        return self._subagent_task(message) is not None
+
+    def _run_subagent(self, message):
+        """
+        Delega la sub-tarea a un SubAgent que comparte proveedor, toolset,
+        compuerta de seguridad y auditor del padre. Nunca eleva permisos.
+        """
+        task = self._subagent_task(message)
+
+        if not task:
+            return {
+                "success": False,
+                "input": message,
+                "intent": "subagent",
+                "response": (
+                    "I.L.U. no pudo identificar una tarea clara "
+                    "para delegar a un sub-agente."
+                ),
+                "core": self.name,
+                "version": self.version
+            }
+
+        sub = SubAgent(
+            provider=self.provider,
+            tools=self.tools,
+            security=self.security,
+            audit=self.audit,
+            memory=self.memory,
+            grant_store=self.grant_store,
+            policy=self.policy,
+            emergency=self.emergency
+        )
+
+        result = sub.run(task)
+
+        self.audit.record(
+            actor="ilu",
+            action="subagent",
+            success=result.get("success"),
+            rounds=result.get("rounds"),
+            tools_used=result.get("tools_used")
+        )
+
+        response = result.get("response")
+
+        if not response:
+            response = (
+                "El sub-agente no devolvió una respuesta."
+            )
+
+        return {
+            "success": result.get("success", False),
+            "input": message,
+            "intent": "subagent",
+            "response": response,
+            "subagent": {
+                "rounds": result.get("rounds", 0),
+                "tools_used": result.get("tools_used", []),
+                "truncated": result.get("truncated", False),
+                "tool": result.get("tool"),
+                "error": result.get("error")
+            },
+            "reasoning": {
+                "type": "subagent",
+                "context_used": 0,
+                "complexity": "delegated"
+            },
+            "provider": {
+                "name": self.provider.name,
+                "version": self.provider.version
+            },
+            "tools": self._tool_capabilities(),
+            "core": self.name,
+            "version": self.version
+        }
+
     def _identify_tool(self, message):
         """
-        Identifica herramientas simples y deterministas.
+        Identifica herramientas simples y deterministas por frase.
 
-        Actualmente system_time es la única herramienta que
-        I.L.U. puede identificar directamente.
+        El panel de Bloque 6 añade a system_time: web_search, read_file
+        y notify (todas de solo lectura/inocuas). Si la frase coincide
+        pero falta el argumento imprescindible (p. ej. "busca en
+        internet" sin consulta), se devuelve None y el modelo lo resuelve.
         """
 
         lowered = message.lower().strip()
@@ -318,12 +532,115 @@ class ILUCore:
             if self.tools.has_tool("system_time"):
                 return "system_time"
 
+        if (
+            self.tools.has_tool("web_search")
+            and self._extract_web_query(message)
+        ):
+            return "web_search"
+
+        if (
+            self.tools.has_tool("read_file")
+            and self._extract_file_path(message)
+        ):
+            return "read_file"
+
+        if (
+            self.tools.has_tool("notify")
+            and self._extract_notify_message(message)
+        ):
+            return "notify"
+
         return None
+
+    @staticmethod
+    def _strip_quotes(text):
+        return text.strip().strip('"').strip("'").strip('"')
+
+    def _extract_web_query(self, message):
+        lowered = message.lower()
+
+        markers = (
+            "busca en internet sobre",
+            "busca en la web sobre",
+            "investiga en internet sobre",
+            "busca en internet",
+            "busca en la web",
+            "investiga en internet",
+        )
+
+        for marker in markers:
+            if marker in lowered:
+                index = lowered.find(marker) + len(marker)
+                return (
+                    self._strip_quotes(message[index:])
+                    .strip(":.,; ")
+                )
+
+        return ""
+
+    def _extract_file_path(self, message):
+        lowered = message.lower()
+
+        markers = (
+            "lee el archivo",
+            "leé el archivo",
+            "muéstrame el archivo",
+            "muestra el archivo",
+            "abre el archivo",
+        )
+
+        for marker in markers:
+            if marker in lowered:
+                index = lowered.find(marker) + len(marker)
+                return (
+                    self._strip_quotes(message[index:])
+                    .strip(":.,; ")
+                )
+
+        return ""
+
+    def _extract_notify_message(self, message):
+        lowered = message.lower()
+
+        markers = (
+            "notifícame",
+            "notificame",
+            "avísame",
+            "avisame",
+            "déjame una nota",
+            "dejame una nota",
+        )
+
+        for marker in markers:
+            if marker in lowered:
+                index = lowered.find(marker) + len(marker)
+                return (
+                    self._strip_quotes(message[index:])
+                    .strip(":.,; ")
+                )
+
+        return ""
+
+    def _tool_arguments(self, tool_name, message):
+        """Argumentos deterministas para una herramienta directa."""
+        if tool_name == "web_search":
+            return {"query": self._extract_web_query(message)}
+
+        if tool_name == "read_file":
+            return {"path": self._extract_file_path(message)}
+
+        if tool_name == "notify":
+            return {"message": self._extract_notify_message(message)}
+
+        return {}
 
     def _create_direct_tool_call(self, message):
         """
         Crea una ToolCall directamente para herramientas
         simples, deterministas y seguras.
+
+        Solo se crea si el argumento imprescindible de la herramienta
+        está presente (consulta, ruta o mensaje).
         """
 
         tool_name = self._identify_tool(message)
@@ -334,9 +651,23 @@ class ILUCore:
         if not self.tools.has_tool(tool_name):
             return None
 
+        arguments = self._tool_arguments(tool_name, message)
+
+        required_argument = {
+            "web_search": "query",
+            "read_file": "path",
+            "notify": "message",
+        }.get(tool_name)
+
+        if required_argument:
+            value = arguments.get(required_argument, "")
+
+            if not str(value).strip():
+                return None
+
         return ToolCall(
             tool=tool_name,
-            arguments={},
+            arguments=arguments,
             reason=(
                 "Herramienta identificada directamente "
                 "por I.L.U."
@@ -651,6 +982,306 @@ class ILUCore:
 
         return None
 
+    # ------------------------------------------------------------------
+    # Autoridad / permisos por lenguaje natural (Bloque 8)
+    #
+    # I.L.U. jamás decide por sí misma qué permisos existen: solo actúa
+    # como interfaz de voz/texto hacia Authority, y Authority exige un
+    # principal raíz (el OWNER) para cualquier concesión/revocación.
+    # El nivel concedido es SIEMPRE "execution" (nunca se autoconcede ni
+    # se delega autoridad por lenguaje natural).
+    # ------------------------------------------------------------------
+
+    def _authority_command(self, message):
+        lowered = message.lower().strip()
+
+        # ----------------------------------------------------------
+        # ESTADO DE PERMISOS
+        # ----------------------------------------------------------
+        status_phrases = (
+            "estado de permisos",
+            "estado de los permisos",
+            "qué permisos hay",
+            "que permisos hay",
+            "qué permisos tiene",
+            "que permisos tiene",
+            "lista de permisos",
+            "permitidos",
+        )
+
+        if any(phrase in lowered for phrase in status_phrases):
+            grants = self.grant_store.list(limit=50)
+
+            if not grants:
+                return self._authority_reply(
+                    message,
+                    "No hay permisos otorgados todavía.",
+                    "permission_status",
+                    grants=[],
+                )
+
+            grant_dicts = [
+                grant.to_dict() for grant in grants
+            ]
+
+            lines = [
+                f"{g['capability']} — {g['status']} → {g['grantee']}"
+                for g in grant_dicts
+            ]
+
+            return self._authority_reply(
+                message,
+                "Permisos: " + " | ".join(lines[:10]),
+                "permission_status",
+                grants=[
+                    {
+                        "grant_id": g["grant_id"],
+                        "capability": g["capability"],
+                        "status": g["status"],
+                        "grantee": g["grantee"],
+                        "level": g["level"],
+                        "expires_at": g["expires_at"],
+                    }
+                    for g in grant_dicts
+                ],
+            )
+
+        # ----------------------------------------------------------
+        # CONCEDER permiso (solo owner; nivel execution)
+        # ----------------------------------------------------------
+        grant_prefixes = (
+            "autoriza ",
+            "autorizá ",
+            "concede permiso para ",
+            "concedé permiso para ",
+            "da permiso para ",
+            "dá permiso para ",
+        )
+
+        for prefix in grant_prefixes:
+            if lowered.startswith(prefix):
+                target = message[len(prefix):].strip().strip(".")
+                target = target.strip()
+
+                if not target:
+                    return None
+
+                capability = target.split()[-1].strip(".,;:").lower()
+
+                # Solo capacidades de ejecución; jamás autoridad,
+                # modificación de política ni autoconcesión.
+                if self.policy.is_prohibited(capability):
+                    return self._authority_reply(
+                        message,
+                        "No puedo otorgar un permiso para una acción "
+                        "prohibida por policy.",
+                        "permission_error",
+                        error="capability_prohibited",
+                    )
+
+                try:
+                    grant = self.authority.grant(
+                        capability=capability,
+                        actor=self.settings.owner_id,
+                        reason="solicitado por owner por lenguaje natural",
+                        origin="nl_owner_command",
+                    )
+                except PermissionError:
+                    return self._authority_reply(
+                        message,
+                        "Esta orden exige autoridad raíz (owner).",
+                        "permission_error",
+                        error="no_autoridad_raiz",
+                    )
+                except ValueError as error:
+                    return self._authority_reply(
+                        message,
+                        "No pude conceder ese permiso: "
+                        f"{error}.",
+                        "permission_error",
+                        error=str(error),
+                    )
+
+                self._save_memory(
+                    message,
+                    memory_type="conversation",
+                    importance=3,
+                )
+
+                return self._authority_reply(
+                    message,
+                    f"Permiso otorgado: '{capability}' (ID {grant.key}).",
+                    "permission_granted",
+                    grant={
+                        "grant_id": grant.key,
+                        "capability": grant.capability,
+                        "level": grant.level,
+                        "expires_at": grant.expires_at,
+                    },
+                )
+
+        # ----------------------------------------------------------
+        # REVOCAR permiso (solo owner)
+        # ----------------------------------------------------------
+        revoke_prefixes = (
+            "revoca el permiso para ",
+            "revocá el permiso para ",
+            "revoca permiso para ",
+            "revoca ",
+            "revocá ",
+        )
+
+        for prefix in revoke_prefixes:
+            if lowered.startswith(prefix):
+                target = message[len(prefix):].strip().strip(".")
+                target = target.strip()
+
+                if not target:
+                    return None
+
+                target = target.split()[-1].strip(".,;:").lower()
+
+                # ¿Target es grant_id directo o una capacidad?
+                grant = self.grant_store.get(target)
+
+                if grant is None:
+                    matches = self.grant_store.list(
+                        capability=target,
+                        status="active",
+                    )
+
+                    if matches:
+                        grant = matches[0]
+
+                if grant is None:
+                    return self._authority_reply(
+                        message,
+                        f"No hay un permiso activo para '{target}'.",
+                        "permission_revoked",
+                        grant=None,
+                    )
+
+                try:
+                    revoked = self.authority.revoke(
+                        grant.key,
+                        actor=self.settings.owner_id,
+                        reason="revocado por owner por lenguaje natural",
+                    )
+                except PermissionError:
+                    return self._authority_reply(
+                        message,
+                        "Esta orden exige autoridad raíz (owner).",
+                        "permission_error",
+                        error="no_autoridad_raiz",
+                    )
+
+                if revoked is None:
+                    return self._authority_reply(
+                        message,
+                        f"No hay un permiso activo para '{target}'.",
+                        "permission_revoked",
+                        grant=None,
+                    )
+
+                self._save_memory(
+                    message,
+                    memory_type="conversation",
+                    importance=3,
+                )
+
+                return self._authority_reply(
+                    message,
+                    f"Permiso revocado: '{target}'.",
+                    "permission_revoked",
+                    grant={
+                        "grant_id": revoked.key,
+                        "capability": revoked.capability,
+                        "status": revoked.status,
+                    },
+                )
+
+        # ----------------------------------------------------------
+        # CAMBIAR NIVEL DE AUTONOMÍA (solo owner)
+        # ----------------------------------------------------------
+        autonomy_prefixes = (
+            "cambia la autonomía a ",
+            "cambia la autonomia a ",
+            "poné la autonomía en ",
+            "pon la autonomía en ",
+            "pone la autonomia en ",
+            "autonomía a ",
+            "autonomia a ",
+        )
+
+        for prefix in autonomy_prefixes:
+            if lowered.startswith(prefix):
+                level = message[len(prefix):].strip().lower().strip(".")
+
+                # Acepta español e inglés para los tres niveles; evita
+                # que "autónoma/o" se rechace por el nombre en inglés.
+                level = {
+                    "manual": "manual",
+                    "asistido": "assisted",
+                    "asistida": "assisted",
+                    "assisted": "assisted",
+                    "autónomo": "autonomous",
+                    "autónoma": "autonomous",
+                    "autonomo": "autonomous",
+                    "autonoma": "autonomous",
+                    "autonomous": "autonomous",
+                }.get(level, level)
+
+                if level not in self.security.AUTONOMY_LEVELS:
+                    return self._authority_reply(
+                        message,
+                        "Nivel de autonomía inválido. Válidos: "
+                        + ", ".join(self.security.AUTONOMY_LEVELS)
+                        + ".",
+                        "permission_error",
+                        error="invalid_autonomy_level",
+                    )
+
+                try:
+                    change = self.authority.set_autonomy(
+                        level,
+                        actor=self.settings.owner_id,
+                    )
+                except PermissionError:
+                    return self._authority_reply(
+                        message,
+                        "Solo el owner puede cambiar la autonomía.",
+                        "permission_error",
+                        error="no_autoridad_raiz",
+                    )
+
+                self._save_memory(
+                    message,
+                    memory_type="conversation",
+                    importance=3,
+                )
+
+                return self._authority_reply(
+                    message,
+                    f"Autonomía: {change['from']} → {change['to']}.",
+                    "autonomy_change",
+                    autonomy=change,
+                )
+
+        return None
+
+    def _authority_reply(self, message, response, intent, **extra):
+        payload = {
+            "success": True,
+            "input": message,
+            "intent": intent,
+            "response": response,
+            "core": self.name,
+            "version": self.version,
+        }
+
+        payload.update(extra)
+        return payload
+
     def _execute_tool_call(self, tool_call, mode="direct"):
         """
         Ejecuta una ToolCall a través de la compuerta de autorización.
@@ -684,7 +1315,13 @@ class ILUCore:
         decision = self.security.decide(
             tool_call.tool,
             permission,
-            mode=mode
+            mode=mode,
+            capability=tool_call.tool,
+            actor="ilu",
+            context={},
+            grant_store=self.grant_store,
+            policy=self.policy,
+            emergency=self.emergency,
         )
 
         self.audit.record(
@@ -694,16 +1331,41 @@ class ILUCore:
             permission=permission,
             decision=decision["decision"],
             mode=mode,
-            reason=decision["reason"]
+            reason=decision["reason"],
+            grant_id=decision.get("grant_id")
         )
 
         if decision["decision"] != "allow":
-            return {
+            result = {
                 "success": False,
                 "error": decision["reason"],
                 "tool": tool_call.tool,
                 "authorization": decision["decision"]
             }
+
+            # La compuerta pidió autorización humana: se abre una
+            # SOLICITUD de autorización (persistente, auditable). El
+            # owner podrá concederla/denegarla; en modo manual las
+            # propuestas del modelo NO generan solicitud (no es "falta
+            # de permiso", es delegación deliberada de la decisión).
+            if (
+                decision["decision"] == "ask"
+                and decision.get("reason") == "authorization_required"
+            ):
+                request = self.auth_requests.open(
+                    capability=tool_call.tool,
+                    reason="Necesita autorización para {tool}".format(
+                        tool=tool_call.tool
+                    ),
+                    principal=self.settings.owner_id,
+                    scope={
+                        "type": "tool",
+                        "tool": tool_call.tool,
+                    },
+                )
+                result["request_id"] = request.key
+
+            return result
 
         try:
             result = self.tools.execute(
@@ -771,6 +1433,13 @@ class ILUCore:
                         f"I.L.U. necesita autorización humana para "
                         f"ejecutar la herramienta '{tool_name}'."
                     )
+
+                    request_id = tool_result.get("request_id")
+
+                    if request_id:
+                        response += (
+                            f" Solicitud abierta: {request_id}."
+                        )
             else:
                 response = (
                     "I.L.U. no pudo ejecutar "
@@ -805,6 +1474,9 @@ class ILUCore:
                 "tool_result": tool_result,
                 "authorization": tool_result.get(
                     "authorization"
+                ),
+                "authorization_request_id": tool_result.get(
+                    "request_id"
                 ),
                 "core": self.name,
                 "version": self.version
@@ -888,6 +1560,22 @@ class ILUCore:
             return memory_command
 
         # ==========================================================
+        # 0.6 AUTORIDAD / PERMISOS (solo owner)
+        #
+        # I.L.U. gestiona el sistema de permisos SOLO como interfaz del
+        # owner hacia Authority: conceder, revocar y consultar.
+        # Authority sigue siendo la única capa que emite/revoca grants
+        # y subir la autonomía exige principal raíz.
+        # ==========================================================
+
+        authority_command = self._authority_command(
+            message
+        )
+
+        if authority_command is not None:
+            return authority_command
+
+        # ==========================================================
         # 1. MEMORIA EXPLÍCITA
         # ==========================================================
 
@@ -957,6 +1645,18 @@ class ILUCore:
 
         if task_command is not None:
             return task_command
+
+        # ==========================================================
+        # 2.75 SUB-AGENTE / SUB-ASSISTANT ANIDADO
+        #
+        # Si el mensaje expresa una intención clara de delegar una
+        # sub-tarea, I.L.U. la encarga a un SubAgent que comparte el
+        # proveedor, el toolset y la compuerta de seguridad del padre.
+        # El sub-agente nunca eleva permisos.
+        # ==========================================================
+
+        if self._is_subagent_request(message):
+            return self._run_subagent(message)
 
         # ==========================================================
         # 3. HERRAMIENTA DIRECTA

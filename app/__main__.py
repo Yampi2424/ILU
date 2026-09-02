@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .core import ILUCore
 from config.settings import ILUSettings
 from config.identity import ILU_IDENTITY
+from security.authorization_request import AuthorizationRequired
 
 
 core = ILUCore()
@@ -63,6 +64,36 @@ def _run_task(task_id, callable_fn, args=None, kwargs=None):
                 action="task_result",
                 task_id=task_id,
                 success=True
+            )
+
+            return
+
+        except AuthorizationRequired as auth_error:
+            # La tarea necesita un permiso que no se posee: se PAUSA y se
+            # abre una solicitud de autorización. Otras tareas
+            # independientes siguen avanzando.
+            request = core.auth_requests.open(
+                capability=auth_error.capability,
+                reason=(
+                    auth_error.reason
+                    or "La tarea necesita autorización para ejecutarse"
+                ),
+                principal=core.settings.owner_id,
+                task_id=task_id,
+                scope=auth_error.scope or {},
+            )
+
+            task_manager.wait_for_authorization(
+                task_id,
+                request.key
+            )
+
+            core.audit.record(
+                actor="ilu",
+                action="task_paused_authorization",
+                task_id=task_id,
+                request_id=request.key,
+                capability=auth_error.capability,
             )
 
             return
@@ -205,6 +236,53 @@ class ILUHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json(200, task)
 
+        elif self._path() == "/grants":
+            # Permisos emitidos (consulta; concesión vía POST).
+            grants = core.grant_store.list(
+                capability=query.get("capability"),
+                status=query.get("status"),
+            )
+
+            self.send_json(200, {
+                "grants": [
+                    grant.to_dict() for grant in grants
+                ],
+                "count": len(grants),
+                "policy_version": core.policy.data.get("version"),
+            })
+
+        elif self._path() == "/policy":
+            # Reglas humanamente auditable (separadas del código).
+            self.send_json(200, {
+                "policy": core.policy.data,
+                "path": core.policy.path,
+            })
+
+        elif self._path() == "/authorization-requests":
+            requests = core.auth_requests.list(limit=200)
+
+            self.send_json(200, {
+                "requests": requests,
+                "count": len(requests),
+            })
+
+        elif self._path() == "/security":
+            # Estado de seguridad: autonomía, owner, grants activos,
+            # dispositivos autorizados y protocolos de emergencia.
+            self.send_json(200, {
+                "autonomy": core.security.autonomy_level,
+                "owner": core.settings.owner_id,
+                "principals": len(core.principals.list()),
+                "grants_active": len(
+                    core.grant_store.list(status="active")
+                ),
+                "authorization_requests_open": len(
+                    [r for r in core.auth_requests.pending()]
+                ),
+                "devices": core.devices.list(),
+                "emergency_active": core.emergency.list_active(),
+            })
+
         else:
             self.send_json(404, {
                 "error": "not_found"
@@ -228,9 +306,183 @@ class ILUHandler(BaseHTTPRequestHandler):
             self._create_task()
             return
 
+        if self._path() == "/grants":
+            # Concesión de permiso (solo un principal raíz).
+            self._grant()
+            return
+
+        if (
+            len(segments) == 2
+            and segments[0] == "authorization-requests"
+        ):
+            # Resolver (conceder/denegar) una solicitud de autorización.
+            self._resolve_authorization_request(segments[1])
+            return
+
+        if self._path() == "/autonomy":
+            # Cambiar nivel de autonomía (solo un principal raíz).
+            self._change_autonomy()
+            return
+
         self.send_json(404, {
             "error": "not_found"
         })
+
+    def _grant(self):
+        """Concede un permiso. Authority valida que el actor sea raíz."""
+        try:
+            data = self._read_json()
+
+            actor = data.get("actor")
+            capability = data.get("capability")
+
+            if not actor or not capability:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "capability_and_actor_required"
+                })
+                return
+
+            grant = core.authority.grant(
+                capability=capability,
+                actor=actor,
+                reason=data.get("reason", ""),
+                level=data.get("level", "execution"),
+                scope_type=data.get("scope_type", "single_action"),
+                task_id=data.get("task_id"),
+                project=data.get("project"),
+                context=data.get("context"),
+                device_id=data.get("device_id"),
+                max_uses=data.get("max_uses"),
+                duration=data.get("duration"),
+            )
+
+            self.send_json(200, {
+                "success": True,
+                "grant": grant.to_dict()
+            })
+
+        except PermissionError as error:
+            self.send_json(403, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except ValueError as error:
+            self.send_json(400, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _resolve_authorization_request(self, request_id):
+        """Concede o deniega una solicitud abierta (solo un raíz)."""
+        try:
+            data = self._read_json()
+
+            actor = data.get("actor")
+            decision = data.get("decision")
+
+            if not actor or decision not in ("granted", "denied"):
+                self.send_json(400, {
+                    "success": False,
+                    "error": "actor_and_decision_required"
+                })
+                return
+
+            result = core.authority.resolve_request(
+                request_id,
+                decision,
+                actor,
+                scope=data.get("scope"),
+                duration=data.get("duration"),
+                reason=data.get("reason", ""),
+            )
+
+            if not result["success"]:
+                self.send_json(404, {
+                    "success": False,
+                    "error": result["error"]
+                })
+                return
+
+            grant = result.get("grant")
+
+            self.send_json(200, {
+                "success": True,
+                "request_id": request_id,
+                "decision": decision,
+                "grant": grant.to_dict() if grant else None
+            })
+
+        except PermissionError as error:
+            self.send_json(403, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except ValueError as error:
+            self.send_json(400, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _change_autonomy(self):
+        """Cambia el nivel de autonomía (solo un principal raíz)."""
+        try:
+            data = self._read_json()
+
+            actor = data.get("actor")
+            level = data.get("level")
+
+            if (
+                not actor
+                or level not in core.security.AUTONOMY_LEVELS
+            ):
+                self.send_json(400, {
+                    "success": False,
+                    "error": "actor_and_valid_level_required"
+                })
+                return
+
+            change = core.authority.set_autonomy(
+                level,
+                actor=actor
+            )
+
+            self.send_json(200, {
+                "success": True,
+                "autonomy": change
+            })
+
+        except PermissionError as error:
+            self.send_json(403, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except ValueError as error:
+            self.send_json(400, {
+                "success": False,
+                "error": str(error)
+            })
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
 
     def _handle_ask(self):
         try:

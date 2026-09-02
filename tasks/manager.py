@@ -172,6 +172,28 @@ class TaskManager:
 
         return task
 
+    def wait_for_authorization(self, task_id, request_id):
+        """
+        Pausa la tarea hasta que el owner resuelva una solicitud de
+        autorización (Bloque 8). La tarea queda en estado "paused" con
+        el campo waiting_authorization apuntando a la solicitud abierta.
+        """
+        task = self.tasks.get(task_id)
+
+        if task is None:
+            return None
+
+        task["state"] = "paused"
+        task["waiting_authorization"] = request_id
+        task["updated_at"] = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ",
+            time.gmtime()
+        )
+
+        self.save()
+
+        return task
+
     def set_progress(self, task_id, progress):
         task = self.tasks.get(task_id)
 

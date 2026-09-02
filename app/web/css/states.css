@@ -1,0 +1,240 @@
+/* ===================================================================
+   I.L.U. — Animaciones de estados del Corazón
+
+   Cada estado visual se define por: movimiento, color y señal.
+   Las animaciones son CSS puro para máximo rendimiento.
+   =================================================================== */
+
+/* --- Breathe (base: idle / slow) ----------------------------------- */
+@keyframes ilu-breathe {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+/* --- Shimmer (highlight interno) ----------------------------------- */
+@keyframes ilu-shimmer {
+  0%, 100% { opacity: 0.4; transform: translate(0, 0); }
+  50% { opacity: 0.7; transform: translate(3px, 2px); }
+}
+
+/* --- Halo pulse ---------------------------------------------------- */
+@keyframes ilu-halo-pulse {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.6;
+    transform: scale(1.05);
+  }
+}
+
+/* --- Listening: onda receptiva ------------------------------------- */
+@keyframes ilu-listen-glow {
+  0%, 100% {
+    box-shadow:
+      0 0 40px rgba(79, 70, 229, 0.4),
+      0 0 80px rgba(139, 92, 246, 0.2),
+      inset 0 -20px 40px rgba(30, 27, 75, 0.5);
+  }
+  50% {
+    box-shadow:
+      0 0 50px rgba(139, 92, 246, 0.5),
+      0 0 100px rgba(139, 92, 246, 0.3),
+      inset 0 -20px 40px rgba(30, 27, 75, 0.4);
+  }
+}
+
+/* --- Thinking: remolino interior ----------------------------------- */
+@keyframes ilu-think-pulse {
+  0%, 100% {
+    transform: scale(0.97);
+    box-shadow:
+      0 0 30px rgba(79, 70, 229, 0.5),
+      0 0 60px rgba(139, 92, 246, 0.25);
+  }
+  50% {
+    transform: scale(1.01);
+    box-shadow:
+      0 0 45px rgba(79, 70, 229, 0.6),
+      0 0 90px rgba(139, 92, 246, 0.35);
+  }
+}
+
+/* --- Responding: onda expansiva ------------------------------------ */
+@keyframes ilu-respond-burst {
+  0% {
+    transform: scale(0.95);
+    box-shadow:
+      0 0 30px rgba(139, 92, 246, 0.4),
+      0 0 60px rgba(139, 92, 246, 0.2);
+  }
+  40% {
+    transform: scale(1.08);
+    box-shadow:
+      0 0 60px rgba(139, 92, 246, 0.7),
+      0 0 120px rgba(139, 92, 246, 0.4);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow:
+      0 0 40px rgba(79, 70, 229, 0.4),
+      0 0 80px rgba(139, 92, 246, 0.2),
+      inset 0 -20px 40px rgba(30, 27, 75, 0.5);
+  }
+}
+
+/* --- Orbit spin ---------------------------------------------------- */
+@keyframes ilu-orbit-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* --- Particle float ------------------------------------------------ */
+@keyframes ilu-particle-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(1);
+  }
+  20% {
+    opacity: 0.8;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-30px) scale(0.3);
+  }
+}
+
+/* --- Learning: anillos expandiendo --------------------------------- */
+@keyframes ilu-learn-expand {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  100% {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+
+/* --- Waiting authorization: parpadeo ámbar ------------------------- */
+@keyframes ilu-wait-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 40px rgba(245, 158, 11, 0.4),
+      0 0 80px rgba(245, 158, 11, 0.15);
+    opacity: 1;
+  }
+  50% {
+    box-shadow:
+      0 0 25px rgba(245, 158, 11, 0.25),
+      0 0 50px rgba(245, 158, 11, 0.1);
+    opacity: 0.85;
+  }
+}
+
+/* --- Error: temblor ------------------------------------------------ */
+@keyframes ilu-error-flicker {
+  0%, 100% {
+    opacity: 1;
+    transform: translate(0, 0);
+  }
+  10% {
+    transform: translate(-1px, 1px);
+  }
+  20% {
+    transform: translate(1px, -1px);
+  }
+  30% {
+    transform: translate(-1px, 0);
+    opacity: 0.9;
+  }
+  40% {
+    transform: translate(1px, 1px);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(0, -1px);
+  }
+  60% {
+    transform: translate(-1px, 0);
+  }
+  70% {
+    opacity: 0.92;
+    transform: translate(0, 1px);
+  }
+  80% {
+    transform: translate(1px, 0);
+  }
+  90% {
+    transform: translate(0, -1px);
+    opacity: 1;
+  }
+}
+
+/* --- Emergency: alarma -------------------------------------------- */
+@keyframes ilu-emergency-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 60px rgba(239, 68, 68, 0.6),
+      0 0 120px rgba(239, 68, 68, 0.3);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow:
+      0 0 80px rgba(239, 68, 68, 0.8),
+      0 0 160px rgba(239, 68, 68, 0.5);
+    transform: scale(1.03);
+  }
+}
+
+/* --- Message entrance ---------------------------------------------- */
+@keyframes ilu-msg-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* --- Fade in ------------------------------------------------------- */
+@keyframes ilu-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* --- Progress bar -------------------------------------------------- */
+@keyframes ilu-progress-stripe {
+  from { background-position: 0 0; }
+  to { background-position: 40px 0; }
+}
+
+.progress-bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ilu-bg-card);
+  overflow: hidden;
+  margin-top: 4px;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  background: var(--ilu-glow);
+  background-image: linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.1) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.1) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 40px 40px;
+  animation: ilu-progress-stripe 1s linear infinite;
+  transition: width 0.4s ease;
+}

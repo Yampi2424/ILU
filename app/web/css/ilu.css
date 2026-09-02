@@ -1,0 +1,879 @@
+/* ===================================================================
+   I.L.U. — Diseño visual de la presencia
+
+   "El Corazón de I.L.U."
+
+   Paleta: Índigo profundo (núcleo) + Violeta (presencia/energía) +
+   Ámbar cálido (servir a la familia) + Verde (éxito/aprendizaje) +
+   Rojo (error/emergencia).
+
+   Principio: I.L.U. es una presencia viva, luminosa, sobre fondo
+   oscuro. Nunca un chatbot genérico.
+   =================================================================== */
+
+/* Tokens de diseño — fuente única de verdad visual */
+:root {
+  /* Core palette */
+  --ilu-core: #4f46e5;
+  --ilu-core-deep: #3730a3;
+  --ilu-core-deepest: #1e1b4b;
+  --ilu-glow: #8b5cf6;
+  --ilu-glow-soft: rgba(139, 92, 246, 0.3);
+  --ilu-warm: #f59e0b;
+  --ilu-warm-soft: rgba(245, 158, 11, 0.3);
+  --ilu-ok: #22c55e;
+  --ilu-ok-soft: rgba(34, 197, 94, 0.3);
+  --ilu-error: #ef4444;
+  --ilu-error-soft: rgba(239, 68, 68, 0.3);
+
+  /* Surface & text */
+  --ilu-bg: #0a0a1a;
+  --ilu-bg-elevated: #111128;
+  --ilu-bg-card: #16163a;
+  --ilu-bg-input: #1c1c44;
+  --ilu-border: rgba(139, 92, 246, 0.15);
+  --ilu-border-active: rgba(139, 92, 246, 0.4);
+  --ilu-text: #eef2ff;
+  --ilu-text-secondary: #94a3b8;
+  --ilu-text-dim: #475569;
+
+  /* Layout */
+  --ilu-topbar-h: 56px;
+  --ilu-sidebar-w: 300px;
+  --ilu-radius: 12px;
+  --ilu-radius-sm: 8px;
+  --ilu-radius-lg: 20px;
+
+  /* Transitions */
+  --ilu-transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --ilu-transition-fast: 0.15s ease;
+
+  /* Spacing */
+  --ilu-gap: 16px;
+  --ilu-gap-sm: 8px;
+  --ilu-gap-lg: 24px;
+
+  /* Fonts */
+  --ilu-font: -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Inter', Roboto, sans-serif;
+  --ilu-font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code',
+    monospace;
+}
+
+/* Reset suave */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  font-family: var(--ilu-font);
+  font-size: 14px;
+  color: var(--ilu-text);
+  background: var(--ilu-bg);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* === BARRA SUPERIOR ================================================ */
+
+.topbar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--ilu-topbar-h);
+  background: var(--ilu-bg-elevated);
+  border-bottom: 1px solid var(--ilu-border);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--ilu-gap);
+  z-index: 100;
+  backdrop-filter: blur(12px);
+}
+
+.topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: 16px;
+  letter-spacing: 0.02em;
+}
+
+.topbar-brand-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--ilu-glow);
+  box-shadow: 0 0 8px var(--ilu-glow);
+}
+
+.topbar-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.topbar-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--ilu-text-secondary);
+  padding: 6px 14px;
+  border-radius: var(--ilu-radius-sm);
+  cursor: pointer;
+  font-size: 13px;
+  font-family: var(--ilu-font);
+  transition: var(--ilu-transition-fast);
+}
+
+.topbar-btn:hover {
+  color: var(--ilu-text);
+  background: var(--ilu-bg-card);
+  border-color: var(--ilu-border);
+}
+
+.topbar-btn.active {
+  color: var(--ilu-glow);
+  background: rgba(139, 92, 246, 0.1);
+  border-color: var(--ilu-border-active);
+}
+
+/* Indicador de modo */
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-left: 12px;
+}
+
+.mode-badge[data-mode="manual"] {
+  background: var(--ilu-warm-soft);
+  color: var(--ilu-warm);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.mode-badge[data-mode="assisted"] {
+  background: var(--ilu-glow-soft);
+  color: var(--ilu-glow);
+  border: 1px solid rgba(139, 92, 246, 0.3);
+}
+
+.mode-badge[data-mode="autonomous"] {
+  background: var(--ilu-ok-soft);
+  color: var(--ilu-ok);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.mode-badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+/* === LAYOUT PRINCIPAL ============================================== */
+
+.app {
+  display: flex;
+  height: 100vh;
+  padding-top: var(--ilu-topbar-h);
+}
+
+/* === PANEL PRINCIPAL (centro) ====================================== */
+
+.main-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  position: relative;
+}
+
+/* === ZONA DEL CORAZÓN (estado + chat) ============================== */
+
+.core-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding: var(--ilu-gap-lg) var(--ilu-gap);
+}
+
+/* === CORAZÓN DE I.L.U. — presencia visual ========================= */
+
+.ilu-core-container {
+  position: relative;
+  width: 180px;
+  height: 180px;
+  flex-shrink: 0;
+  margin-bottom: var(--ilu-gap);
+}
+
+.ilu-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* La esfera central luminosa */
+.ilu-core-orb {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--ilu-glow) 0%,
+    var(--ilu-core) 40%,
+    var(--ilu-core-deep) 70%,
+    var(--ilu-core-deepest) 100%
+  );
+  box-shadow:
+    0 0 40px rgba(79, 70, 229, 0.4),
+    0 0 80px rgba(139, 92, 246, 0.2),
+    inset 0 -20px 40px rgba(30, 27, 75, 0.5);
+  animation: ilu-breathe 4s ease-in-out infinite;
+  transition: background 0.6s ease, box-shadow 0.6s ease;
+}
+
+/* Highlight interno (brillo superior) */
+.ilu-core-orb::before {
+  content: '';
+  position: absolute;
+  top: 15%;
+  left: 20%;
+  width: 35%;
+  height: 35%;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.25) 0%,
+    transparent 70%
+  );
+  animation: ilu-shimmer 6s ease-in-out infinite;
+}
+
+/* Halo exterior */
+.ilu-core-halo {
+  position: absolute;
+  inset: -30px;
+  border-radius: 50%;
+  border: 1px solid rgba(139, 92, 246, 0.15);
+  animation: ilu-halo-pulse 4s ease-in-out infinite;
+}
+
+.ilu-core-halo:nth-child(2) {
+  inset: -50px;
+  border-color: rgba(139, 92, 246, 0.08);
+  animation-delay: -1s;
+}
+
+/* Anillos orbitales (trabajo) */
+.ilu-orbit {
+  position: absolute;
+  inset: -15px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  border-top-color: var(--ilu-glow);
+  border-right-color: rgba(139, 92, 246, 0.3);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.ilu-orbit:nth-child(4) {
+  inset: -35px;
+  border-top-color: var(--ilu-core);
+  border-left-color: rgba(79, 70, 229, 0.3);
+  animation-direction: reverse;
+}
+
+.ilu-core-container[data-state="working"] .ilu-orbit {
+  opacity: 1;
+  animation: ilu-orbit-spin 2s linear infinite;
+}
+
+.ilu-core-container[data-state="working"] .ilu-orbit:nth-child(4) {
+  animation-duration: 3s;
+}
+
+/* Partículas (trabajo) */
+.ilu-particles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.ilu-particle {
+  position: absolute;
+  width: 3px;
+  height: 3px;
+  border-radius: 50%;
+  background: var(--ilu-glow);
+  opacity: 0;
+}
+
+.ilu-core-container[data-state="working"] .ilu-particle {
+  animation: ilu-particle-float 2.5s ease-in-out infinite;
+}
+
+.ilu-particle:nth-child(1) { top: 10%; left: 50%; animation-delay: 0s; }
+.ilu-particle:nth-child(2) { top: 30%; left: 90%; animation-delay: 0.4s; }
+.ilu-particle:nth-child(3) { top: 70%; left: 95%; animation-delay: 0.8s; }
+.ilu-particle:nth-child(4) { top: 90%; left: 60%; animation-delay: 1.2s; }
+.ilu-particle:nth-child(5) { top: 80%; left: 10%; animation-delay: 1.6s; }
+.ilu-particle:nth-child(6) { top: 40%; left: 5%; animation-delay: 2.0s; }
+
+/* Anillos de aprendizaje */
+.ilu-learn-ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--ilu-ok);
+  opacity: 0;
+  transition: opacity 0.4s ease;
+}
+
+.ilu-core-container[data-state="learning"] .ilu-learn-ring {
+  opacity: 1;
+  animation: ilu-learn-expand 2s ease-out infinite;
+}
+
+.ilu-learn-ring:nth-child(8) { animation-delay: 0.6s; }
+.ilu-learn-ring:nth-child(9) { animation-delay: 1.2s; }
+
+/* Estado de escuchando: onda receptiva */
+.ilu-core-container[data-state="listening"] .ilu-core-orb {
+  animation: ilu-breathe 2.5s ease-in-out infinite,
+             ilu-listen-glow 2s ease-in-out infinite;
+}
+
+/* Estado pensando: remolino */
+.ilu-core-container[data-state="thinking"] .ilu-core-orb {
+  animation: ilu-think-pulse 1.8s ease-in-out infinite;
+}
+
+/* Estado respondiendo: radiación */
+.ilu-core-container[data-state="responding"] .ilu-core-orb {
+  animation: ilu-respond-burst 0.8s ease-out;
+}
+
+/* Estado esperando autorización */
+.ilu-core-container[data-state="authorization"] .ilu-core-orb {
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--ilu-warm) 0%,
+    #b45309 40%,
+    #78350f 70%,
+    #1c1c44 100%
+  );
+  box-shadow:
+    0 0 40px rgba(245, 158, 11, 0.4),
+    0 0 80px rgba(245, 158, 11, 0.2);
+  animation: ilu-wait-pulse 2s ease-in-out infinite;
+}
+
+/* Estado error */
+.ilu-core-container[data-state="error"] .ilu-core-orb {
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--ilu-error) 0%,
+    #b91c1c 40%,
+    #7f1d1d 70%,
+    #1c1c44 100%
+  );
+  box-shadow:
+    0 0 40px rgba(239, 68, 68, 0.4),
+    0 0 80px rgba(239, 68, 68, 0.2);
+  animation: ilu-error-flicker 0.5s ease-in-out infinite;
+}
+
+/* Estado emergencia */
+.ilu-core-container[data-state="emergency"] .ilu-core-orb {
+  background: radial-gradient(
+    circle at 35% 35%,
+    var(--ilu-error) 0%,
+    #dc2626 40%,
+    #991b1b 70%,
+    #1c1c44 100%
+  );
+  box-shadow:
+    0 0 60px rgba(239, 68, 68, 0.6),
+    0 0 120px rgba(239, 68, 68, 0.3);
+  animation: ilu-emergency-pulse 0.8s ease-in-out infinite;
+}
+
+/* Inactivo: apagado */
+.ilu-core-container[data-state="idle"] .ilu-core-orb {
+  background: radial-gradient(
+    circle at 35% 35%,
+    rgba(139, 92, 246, 0.5) 0%,
+    var(--ilu-core-deep) 40%,
+    var(--ilu-core-deepest) 70%,
+    var(--ilu-bg) 100%
+  );
+  box-shadow:
+    0 0 20px rgba(79, 70, 229, 0.2);
+  animation: ilu-breathe 6s ease-in-out infinite;
+}
+
+/* Label de estado */
+.ilu-state-label {
+  text-align: center;
+  font-size: 12px;
+  color: var(--ilu-text-secondary);
+  margin-top: var(--ilu-gap-sm);
+  min-height: 18px;
+  transition: color var(--ilu-transition);
+}
+
+.ilu-core-container[data-state="authorization"] ~ .ilu-state-label {
+  color: var(--ilu-warm);
+}
+
+.ilu-core-container[data-state="error"] ~ .ilu-state-label {
+  color: var(--ilu-error);
+}
+
+/* === ÁREA DE CHAT ================================================ */
+
+.chat-area {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--ilu-gap) var(--ilu-gap);
+}
+
+.chat-messages {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ilu-gap-sm);
+  max-height: 400px;
+  overflow-y: auto;
+  padding-bottom: var(--ilu-gap);
+}
+
+.chat-msg {
+  max-width: 85%;
+  padding: 10px 14px;
+  border-radius: var(--ilu-radius);
+  line-height: 1.5;
+  font-size: 14px;
+  animation: ilu-msg-in 0.3s ease-out;
+}
+
+.chat-msg.user {
+  align-self: flex-end;
+  background: var(--ilu-core);
+  color: white;
+  border-bottom-right-radius: 4px;
+}
+
+.chat-msg.assistant {
+  align-self: flex-start;
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text);
+  border: 1px solid var(--ilu-border);
+  border-bottom-left-radius: 4px;
+}
+
+.chat-msg .msg-meta {
+  font-size: 11px;
+  color: var(--ilu-text-dim);
+  margin-top: 4px;
+  font-family: var(--ilu-font-mono);
+}
+
+/* Input del chat */
+.chat-input-row {
+  display: flex;
+  gap: var(--ilu-gap-sm);
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--ilu-gap) var(--ilu-gap);
+}
+
+.chat-input {
+  flex: 1;
+  background: var(--ilu-bg-input);
+  border: 1px solid var(--ilu-border);
+  border-radius: var(--ilu-radius);
+  padding: 12px 16px;
+  color: var(--ilu-text);
+  font-size: 14px;
+  font-family: var(--ilu-font);
+  outline: none;
+  transition: border-color var(--ilu-transition-fast);
+  resize: none;
+  min-height: 44px;
+  max-height: 120px;
+}
+
+.chat-input:focus {
+  border-color: var(--ilu-border-active);
+}
+
+.chat-input::placeholder {
+  color: var(--ilu-text-dim);
+}
+
+.chat-send {
+  background: var(--ilu-core);
+  color: white;
+  border: none;
+  border-radius: var(--ilu-radius);
+  padding: 12px 20px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: var(--ilu-font);
+  transition: var(--ilu-transition-fast);
+  white-space: nowrap;
+}
+
+.chat-send:hover {
+  background: var(--ilu-glow);
+}
+
+.chat-send:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* === SIDEBAR (contexto) ============================================ */
+
+.sidebar {
+  width: var(--ilu-sidebar-w);
+  background: var(--ilu-bg-elevated);
+  border-left: 1px solid var(--ilu-border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  transition: width var(--ilu-transition), opacity var(--ilu-transition);
+}
+
+.sidebar.collapsed {
+  width: 0;
+  opacity: 0;
+  overflow: hidden;
+  border: none;
+}
+
+.sidebar-section {
+  padding: var(--ilu-gap);
+  border-bottom: 1px solid var(--ilu-border);
+}
+
+.sidebar-section:last-child {
+  border-bottom: none;
+}
+
+.sidebar-title {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ilu-text-dim);
+  margin-bottom: var(--ilu-gap-sm);
+}
+
+.sidebar-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 13px;
+  color: var(--ilu-text-secondary);
+  transition: var(--ilu-transition-fast);
+}
+
+.sidebar-item:hover {
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text);
+}
+
+.sidebar-item-icon {
+  font-size: 14px;
+  width: 20px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+.sidebar-item-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-item-badge {
+  font-size: 10px;
+  font-family: var(--ilu-font-mono);
+  color: var(--ilu-text-dim);
+  flex-shrink: 0;
+}
+
+/* Estado vacío */
+.sidebar-empty {
+  font-size: 12px;
+  color: var(--ilu-text-dim);
+  font-style: italic;
+  padding: 8px;
+}
+
+/* === PANEL DE CONTENIDO (Tasks/Permisos/etc) ====================== */
+
+.panel-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(10, 10, 26, 0.8);
+  backdrop-filter: blur(4px);
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  animation: ilu-fade-in 0.2s ease-out;
+}
+
+.panel-overlay.visible {
+  display: flex;
+}
+
+.panel {
+  background: var(--ilu-bg-elevated);
+  border: 1px solid var(--ilu-border);
+  border-radius: var(--ilu-radius-lg);
+  width: 90%;
+  max-width: 640px;
+  max-height: 80vh;
+  overflow-y: auto;
+  padding: var(--ilu-gap-lg);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--ilu-gap);
+}
+
+.panel-title {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.panel-close {
+  background: transparent;
+  border: 1px solid var(--ilu-border);
+  color: var(--ilu-text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--ilu-transition-fast);
+}
+
+.panel-close:hover {
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text);
+}
+
+/* Tablas de datos */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.data-table th {
+  text-align: left;
+  padding: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--ilu-text-dim);
+  border-bottom: 1px solid var(--ilu-border);
+}
+
+.data-table td {
+  padding: 8px;
+  border-bottom: 1px solid var(--ilu-border);
+  color: var(--ilu-text-secondary);
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+/* Badges de estado */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-badge.running {
+  background: var(--ilu-glow-soft);
+  color: var(--ilu-glow);
+}
+
+.status-badge.done,
+.status-badge.completed {
+  background: var(--ilu-ok-soft);
+  color: var(--ilu-ok);
+}
+
+.status-badge.failed,
+.status-badge.error {
+  background: var(--ilu-error-soft);
+  color: var(--ilu-error);
+}
+
+.status-badge.pending {
+  background: var(--ilu-warm-soft);
+  color: var(--ilu-warm);
+}
+
+.status-badge.active {
+  background: var(--ilu-ok-soft);
+  color: var(--ilu-ok);
+}
+
+/* Botones de acción */
+.action-btn {
+  background: var(--ilu-bg-card);
+  border: 1px solid var(--ilu-border);
+  color: var(--ilu-text-secondary);
+  padding: 6px 12px;
+  border-radius: var(--ilu-radius-sm);
+  cursor: pointer;
+  font-size: 12px;
+  font-family: var(--ilu-font);
+  transition: var(--ilu-transition-fast);
+}
+
+.action-btn:hover {
+  background: var(--ilu-bg-input);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-active);
+}
+
+.action-btn.primary {
+  background: var(--ilu-core);
+  color: white;
+  border-color: var(--ilu-core);
+}
+
+.action-btn.primary:hover {
+  background: var(--ilu-glow);
+  border-color: var(--ilu-glow);
+}
+
+.action-btn.danger {
+  color: var(--ilu-error);
+  border-color: rgba(239, 68, 68, 0.3);
+}
+
+.action-btn.danger:hover {
+  background: var(--ilu-error-soft);
+}
+
+/* === SCROLLBAR ==================================================== */
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--ilu-border);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ilu-border-active);
+}
+
+/* === EMPTY STATE =================================================== */
+
+.empty-state {
+  text-align: center;
+  padding: var(--ilu-gap-lg);
+  color: var(--ilu-text-dim);
+  font-size: 13px;
+}
+
+.empty-state-icon {
+  font-size: 32px;
+  margin-bottom: var(--ilu-gap-sm);
+  opacity: 0.5;
+}
+
+/* === LOADING ====================================================== */
+
+.loading-dots::after {
+  content: '';
+  animation: ilu-dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes ilu-dots {
+  0% { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+  100% { content: ''; }
+}
+
+/* === RESPONSIVE =================================================== */
+
+@media (max-width: 768px) {
+  .sidebar {
+    position: fixed;
+    right: 0;
+    top: var(--ilu-topbar-h);
+    bottom: 0;
+    z-index: 50;
+    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
+  }
+
+  .ilu-core-container {
+    width: 140px;
+    height: 140px;
+  }
+
+  .chat-msg {
+    max-width: 92%;
+  }
+
+  .topbar-brand span {
+    display: none;
+  }
+}

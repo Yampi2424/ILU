@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import mimetypes
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,9 @@ from security.authorization_request import AuthorizationRequired
 
 core = ILUCore()
 settings = ILUSettings()
+
+# Directorio de archivos estáticos de la interfaz web (I.L.U. Presencia).
+WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 
 # I.L.U. usa un único TaskManager compartido entre el core y el HTTP:
 # el registro en memoria y en disco es el mismo para ambos.
@@ -175,6 +179,37 @@ class ILUHandler(BaseHTTPRequestHandler):
 
         return json.loads(raw_body.decode("utf-8"))
 
+    def _send_file(self, relative_path):
+        """
+        Sirve un archivo estático desde app/web/.
+
+        Devuelve True si el archivo existía y fue enviado;
+        False si no se encontró (el caller decide la respuesta).
+        """
+        safe = os.path.normpath(relative_path)
+        if safe.startswith(".."):
+            return False
+
+        file_path = os.path.join(WEB_DIR, safe)
+
+        if not os.path.isfile(file_path):
+            return False
+
+        content_type, _ = mimetypes.guess_type(file_path)
+        if content_type is None:
+            content_type = "application/octet-stream"
+
+        with open(file_path, "rb") as f:
+            body = f.read()
+
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(body)
+        return True
+
     # ------------------------------------------------------------------
     # GET
     # ------------------------------------------------------------------
@@ -183,7 +218,21 @@ class ILUHandler(BaseHTTPRequestHandler):
         segments = self._segments()
         query = _query_params(self.path)
 
-        if self._path() == "/":
+        # --- Archivos estáticos de la interfaz (I.L.U. Presencia) ---
+        path = self._path()
+
+        if path == "/":
+            if self._send_file("index.html"):
+                return
+
+        if (
+            len(segments) >= 2
+            and segments[0] in ("css", "js", "assets")
+            and self._send_file(path.lstrip("/"))
+        ):
+            return
+
+        if path == "/":
             self.send_json(200, {
                 "name": "I.L.U.",
                 "status": "online",

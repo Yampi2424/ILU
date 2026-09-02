@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>I.L.U. — Inteligencia Local Unificada</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%234f46e5'/><circle cx='40' cy='40' r='15' fill='rgba(139,92,246,0.5)'/></svg>">
+  <link rel="stylesheet" href="/css/ilu.css">
+  <link rel="stylesheet" href="/css/states.css">
+</head>
+<body>
+
+  <!-- ====== BARRA SUPERIOR ====== -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <div class="topbar-brand-dot"></div>
+      <span>I.L.U.</span>
+      <div class="mode-badge" id="modeBadge" data-mode="manual">
+        <div class="mode-badge-dot"></div>
+        <span id="modeText">Manual</span>
+      </div>
+    </div>
+
+    <nav class="topbar-nav">
+      <button class="topbar-btn active" data-view="chat" title="Conversar">
+        Conversar
+      </button>
+      <button class="topbar-btn" data-view="tasks" title="Tareas">
+        Tareas
+      </button>
+      <button class="topbar-btn" data-view="permissions" title="Permisos">
+        Permisos
+      </button>
+      <button class="topbar-btn" data-view="about" title="Identidad">
+        I.L.U.
+      </button>
+      <button class="topbar-btn" id="sidebarToggle" title="Panel lateral">
+        ☰
+      </button>
+    </nav>
+  </header>
+
+  <!-- ====== APP ====== -->
+  <div class="app">
+
+    <!-- ====== PANEL PRINCIPAL ====== -->
+    <main class="main-panel">
+
+      <!-- === VISTA: CONVERSACIÓN === -->
+      <div id="viewChat" class="core-zone">
+
+        <!-- Corazón de I.L.U. -->
+        <div class="ilu-core-container" id="iluCore" data-state="idle">
+          <div class="ilu-core">
+            <div class="ilu-core-orb"></div>
+          </div>
+          <div class="ilu-core-halo"></div>
+          <div class="ilu-core-halo"></div>
+          <div class="ilu-orbit"></div>
+          <div class="ilu-orbit"></div>
+          <div class="ilu-particles">
+            <div class="ilu-particle"></div>
+            <div class="ilu-particle"></div>
+            <div class="ilu-particle"></div>
+            <div class="ilu-particle"></div>
+            <div class="ilu-particle"></div>
+            <div class="ilu-particle"></div>
+          </div>
+          <div class="ilu-learn-ring"></div>
+          <div class="ilu-learn-ring"></div>
+          <div class="ilu-learn-ring"></div>
+        </div>
+
+        <div class="ilu-state-label" id="stateLabel">
+          I.L.U. está lista
+        </div>
+
+        <!-- Mensajes -->
+        <div class="chat-area">
+          <div class="chat-messages" id="chatMessages">
+            <div class="chat-msg assistant">
+              <div>Hola. Soy I.L.U., tu inteligencia local unificada. ¿En qué puedo ayudarte?</div>
+              <div class="msg-meta">IDENTITY</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Input -->
+        <div class="chat-input-row">
+          <textarea
+            class="chat-input"
+            id="chatInput"
+            placeholder="Escribe un mensaje a I.L.U…"
+            rows="1"
+          ></textarea>
+          <button class="chat-send" id="chatSend">Enviar</button>
+        </div>
+      </div>
+
+      <!-- === VISTA: TAREAS === -->
+      <div id="viewTasks" class="core-zone" style="display:none;">
+        <div class="chat-area" style="max-width:100%;">
+          <div class="sidebar-title" style="margin-bottom:16px; font-size:14px; text-transform:none; letter-spacing:normal; color:var(--ilu-text);">
+            Tareas en segundo plano
+          </div>
+          <div id="tasksList">
+            <div class="empty-state">
+              <div class="empty-state-icon">📋</div>
+              <div>Cargando tareas…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- === VISTA: PERMISOS === -->
+      <div id="viewPermissions" class="core-zone" style="display:none;">
+        <div class="chat-area" style="max-width:100%;">
+
+          <div class="sidebar-title" style="margin-bottom:16px; font-size:14px; text-transform:none; letter-spacing:normal; color:var(--ilu-text);">
+            Estado de seguridad y permisos
+          </div>
+
+          <!-- Autonomía -->
+          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px; margin-bottom:16px;">
+            <div class="sidebar-title">Autonomía</div>
+            <div id="permAutonomy" style="font-size:14px; color:var(--ilu-text-secondary);">Cargando…</div>
+            <div style="margin-top:12px; display:flex; gap:8px;" id="autonomyButtons">
+              <button class="action-btn" data-level="manual">Manual</button>
+              <button class="action-btn" data-level="assisted">Asistido</button>
+              <button class="action-btn" data-level="autonomous">Autónomo</button>
+            </div>
+          </div>
+
+          <!-- Solicitudes abiertas -->
+          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px; margin-bottom:16px;">
+            <div class="sidebar-title">Solicitudes de autorización</div>
+            <div id="permRequests">
+              <div class="empty-state">
+                <div>Cargando…</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Grants activos -->
+          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px;">
+            <div class="sidebar-title">Permisos concedidos</div>
+            <div id="permGrants">
+              <div class="empty-state">
+                <div>Cargando…</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- === VISTA: ABOUT === -->
+      <div id="viewAbout" class="core-zone" style="display:none;">
+        <div class="chat-area" style="max-width:100%;">
+          <div id="aboutContent">
+            <div class="empty-state">
+              <div class="empty-state-icon">ℹ️</div>
+              <div>Cargando identidad…</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+
+    <!-- ====== SIDEBAR ====== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-title">Memoria / Contexto</div>
+        <div id="sidebarMemory">
+          <div class="sidebar-empty">Sin contexto aún</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-title">Herramienta activa</div>
+        <div id="sidebarTool">
+          <div class="sidebar-empty">Ninguna</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-title">Sub-agente</div>
+        <div id="sidebarSubagent">
+          <div class="sidebar-empty">Inactivo</div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-title">Proveedor</div>
+        <div id="sidebarProvider">
+          <div class="sidebar-empty">Cargando…</div>
+        </div>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ====== PANEL MODAL (Tareas detalladas, Permisos, etc) ====== -->
+  <div class="panel-overlay" id="panelOverlay">
+    <div class="panel">
+      <div class="panel-header">
+        <div class="panel-title" id="panelTitle"></div>
+        <button class="panel-close" id="panelClose">×</button>
+      </div>
+      <div id="panelBody"></div>
+    </div>
+  </div>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/ilu-core.js"></script>
+  <script src="/js/ui.js"></script>
+  <script src="/js/app.js"></script>
+
+</body>
+</html>

@@ -236,6 +236,26 @@ class ILUHandler(BaseHTTPRequestHandler):
             else:
                 self.send_json(200, task)
 
+        elif (
+            len(segments) == 2
+            and segments[0] == "conversations"
+        ):
+            # Bloque 10: auditar/debug el historial de una sesión.
+            session_id = segments[1]
+
+            turns = core.conversations.recent(
+                session_id,
+                limit=int(
+                    query.get("limit", "100")
+                )
+            )
+
+            self.send_json(200, {
+                "session_id": session_id,
+                "count": len(turns),
+                "turns": turns
+            })
+
         elif self._path() == "/grants":
             # Permisos emitidos (consulta; concesión vía POST).
             grants = core.grant_store.list(
@@ -489,7 +509,13 @@ class ILUHandler(BaseHTTPRequestHandler):
             data = self._read_json()
             message = data.get("message", "")
 
-            result = core.process(message)
+            # Bloque 10: sesión de conversación (contexto multi-turn).
+            session_id = data.get("session_id")
+
+            result = core.process(
+                message,
+                session_id=session_id
+            )
 
             status = 200 if result["success"] else 400
 
@@ -564,6 +590,35 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "success": False,
                 "error": "invalid_json"
             })
+
+    # ------------------------------------------------------------------
+    # DELETE
+    # ------------------------------------------------------------------
+
+    def do_DELETE(self):
+        segments = self._segments()
+
+        if (
+            len(segments) == 2
+            and segments[0] == "conversations"
+        ):
+            # Bloque 10: resetear el historial de una sesión.
+            session_id = segments[1]
+
+            core.conversations.reset(session_id)
+
+            self.send_json(200, {
+                "success": True,
+                "session_id": session_id,
+                "message": (
+                    f"Historial de la sesión '{session_id}' borrado."
+                )
+            })
+            return
+
+        self.send_json(404, {
+            "error": "not_found"
+        })
 
     # ------------------------------------------------------------------
     # PUT

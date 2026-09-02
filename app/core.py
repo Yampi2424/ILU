@@ -1,4 +1,5 @@
 from memory.router import MemoryRouter
+from memory.conversations import ConversationStore
 from app.reasoning import ILUReasoning
 from app.providers import create_runtime_provider
 from app.security import SecurityGate
@@ -73,6 +74,12 @@ class ILUCore:
         self.version = self.settings.version
 
         self.memory = MemoryRouter()
+        # Bloque 10: historial de conversación multi-turn (contexto entre
+        # mensajes de una misma sesión). Es solo contexto de lectura; la
+        # autoridad y el gateo de herramientas siguen intactos.
+        self.conversations = ConversationStore(
+            path=self.settings.conversations_path
+        )
         self.reasoning = ILUReasoning()
         # Proveedor de ejecución: con OmniRoute, envuelto para caer en
         # Ollama local si el cloud falla (Bloque 9).
@@ -1529,7 +1536,7 @@ class ILUCore:
             "version": self.version
         }
 
-    def process(self, message):
+    def process(self, message, session_id=None):
         if not isinstance(message, str):
             return {
                 "success": False,
@@ -1543,6 +1550,10 @@ class ILUCore:
                 "success": False,
                 "error": "empty_message"
             }
+
+        # Bloque 10: cada conversación vive bajo un session_id. Si no se
+        # indica, se usa la sesión por defecto (comportamiento heredado).
+        session_id = session_id or "default"
 
         # ==========================================================
         # 0.5 ADMINISTRACIÓN DE MEMORIA
@@ -1776,9 +1787,33 @@ class ILUCore:
         # forma honesta y no se ejecuta nada.
         # ==========================================================
 
+        # Bloque 10: se inyecta el historial de la sesión como contexto
+        # adicional para que el modelo recuerde lo dicho antes. Es solo
+        # contexto de lectura; no cambia el gateo de herramientas.
+        model_context = list(context or [])
+
+        history_turns = self.conversations.recent(
+            session_id,
+            limit=self.settings.history_turns
+        )
+
+        if history_turns:
+            model_context.append({
+                "content": (
+                    self.conversations.transcript(history_turns)
+                )
+            })
+
+        # Bloque 10: se registra el turno del usuario antes de la llamada.
+        self.conversations.append(
+            session_id,
+            "user",
+            message
+        )
+
         model_result = self.provider.generate(
             message,
-            context,
+            model_context,
             self._available_tools()
         )
 
@@ -1833,6 +1868,14 @@ class ILUCore:
 
         else:
             response = str(model_result)
+
+        # Bloque 10: se registra el turno del asistente para que la
+        # siguiente consulta de la sesión tenga contexto de lo respondido.
+        self.conversations.append(
+            session_id,
+            "assistant",
+            response
+        )
 
         # ==========================================================
         # 8. MEMORIA DE CONVERSACIÓN

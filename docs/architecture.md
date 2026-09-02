@@ -525,3 +525,57 @@ autonomía, registrarse ni activar emergencias (testeado
   mantienen dentro de cada clase).
 - El tool-shape soporta actualmente parámetros vacíos (sin JSON-schema)
   en `properties`; el refinado del esquema por tool es PLANIFICADO.
+
+## Bloque 10 · Historial de conversación multi-turn
+
+### Qué se construyó
+
+- **`memory/conversations.py` (NUEVO)** — `ConversationStore`: guarda los
+  turnos de cada sesión (`session_id`) para que I.L.U. mantenga contexto
+  entre mensajes de un mismo usuario. Persistencia JSONL local
+  (`memory/conversations.jsonl`, gitignored) o tabla Postgres
+  `ilu_conversations` cuando hay `DATABASE_URL`, reutilizando el patrón de
+  `MemoryStore`. API: `append`, `recent(limit)`, `reset`, `list_sessions`
+  y `transcript`.
+- **Inyección de historial en `core.py`** — `process(message,
+  session_id=None)` carga los últimos `ILU_HISTORY_TURNS` turnos de la
+  sesión y los inyecta como contexto al modelo en la llamada a `generate`.
+  Es **solo contexto de lectura**: no cambia el gateo de herramientas
+  (Bloque 9) ni la autoridad (Bloque 8).
+- **Registro de turnos** — en el camino del modelo, se guarda el turno del
+  usuario antes de la llamada y el del asistente tras la respuesta, de modo
+  que la siguiente consulta de la sesión tiene contexto.
+- **API HTTP** — `/ask` acepta `session_id` (opcional; por defecto
+  `"default"`); `GET /conversations/{session_id}` (auditar/debug) y
+  `DELETE /conversations/{session_id}` (resetear la sesión).
+- **Config** — `ILU_CONVERSATIONS_PATH` (default
+  `memory/conversations.jsonl`) e `ILU_HISTORY_TURNS` (default `6`).
+
+### Archivos
+
+- **Nuevos**: `memory/conversations.py`, `tests/test_conversations.py`,
+  `tests/test_core_multi_turn.py`
+- **Modificados**: `app/core.py`, `app/__main__.py`,
+  `config/settings.py`, `tests/conftest.py`, `.gitignore`
+- **Intactos**: `app/providers.py`, `app/toolshape.py`, `security/`,
+  `tools/`, contratos HTTP existentes.
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **363 passed** (13 nuevos del Bloque 10; cero
+  regresiones sobre Bloques 1–9).
+- Smoke HTTP: `/healthz` OK; `/ask` con `session_id` registra turnos
+  (`user`/`assistant`); `GET /conversations/s1` lista el historial;
+  `DELETE` lo resetea.
+
+### Limitaciones / PLANIFICADO
+
+- El historial es solo del camino del modelo; los turnos que responden
+  caminos deterministas (saludo, hora, memoria, tareas) no se guardan
+  como historial de sesión (aunque sí en la memoria `conversation`).
+- Historial en texto plano, sin embeddings; la búsqueda semántica del
+  historial es PLANIFICADO.
+- Un solo hilo de conversación por sesión (sin ramas); los subagentes
+  (Bloque 7) usan su propio historial fresco, no el de la sesión padre.
+- Sin frontend/UX web de conversaciones.

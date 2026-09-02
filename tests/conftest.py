@@ -27,4 +27,8 @@ def ilu_local_stores(monkeypatch, tmp_path):
     )
     monkeypatch.setenv("ILU_TASKS_PATH", str(tmp_path / "tasks.json"))
     monkeypatch.setenv("ILU_AUDIT_PATH", str(tmp_path / "audit.jsonl"))
+    monkeypatch.setenv(
+        "ILU_CONVERSATIONS_PATH",
+        str(tmp_path / "conversations.jsonl")
+    )
     monkeypatch.setenv("ILU_WORKSPACE", str(tmp_path / "workspace"))

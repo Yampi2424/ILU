@@ -58,6 +58,19 @@ class ILUSettings:
             "memory/tasks.json"
         )
 
+        # ---- Bloque 10: historial de conversación multi-turn ----
+        self.conversations_path = os.environ.get(
+            "ILU_CONVERSATIONS_PATH",
+            "memory/conversations.jsonl"
+        )
+
+        self.history_turns = int(
+            os.environ.get(
+                "ILU_HISTORY_TURNS",
+                "6"
+            )
+        )
+
         # ---- Bloque 8: sistema de autoridad / permisos ----
         # Unica variable que I.L.U. necesita conocer del mundo humano:
         # quién es el OWNER (autoridad raíz) en este dispositivo.

@@ -5,6 +5,7 @@ __pycache__/
 .venv/
 venv/
 env/
+.pytest_cache/
 
 # Node
 node_modules/
@@ -37,5 +38,7 @@ temp/
 *.sqlite
 *.sqlite3
 
-# Local ILU memory
+# Local ILU memory and audit
 memory/data.json
+memory/audit.jsonl
+memory/tasks.json

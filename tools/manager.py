@@ -38,6 +38,14 @@ class ToolManager:
     def has_tool(self, name):
         return name in self.tools
 
+    def get_permission(self, name):
+        tool = self.tools.get(name)
+
+        if tool is None:
+            return None
+
+        return tool["permission"]
+
     def execute(self, name, **kwargs):
         tool = self.tools.get(name)
 

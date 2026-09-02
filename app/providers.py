@@ -1,152 +1,180 @@
 import json
 import os
 
-try:
-    import ollama
-except ImportError:
-    ollama = None
+import requests
+
+from config.identity import ilu_system_prompt
 
 
 class AIProvider:
     """
     Interfaz base para los proveedores de inteligencia de I.L.U.
+
+    Los proveedores son motores que I.L.U. utiliza.
+    La identidad de I.L.U. no depende del proveedor activo.
     """
 
     def __init__(self):
         self.name = "base"
-        self.version = "0.5.0"
+        self.version = "0.7.0"
 
     def generate(self, message, context=None, tools=None):
         raise NotImplementedError(
             "El proveedor debe implementar generate()"
         )
 
+    def _messages(self, message, context):
+        """
+        Mensajes de sistema y usuario compartidos por todos
+        los proveedores.
+        """
+
+        return [
+            {
+                "role": "system",
+                "content": ilu_system_prompt(context)
+            },
+            {
+                "role": "user",
+                "content": message
+            }
+        ]
+
+    def _available_tools(self, tools):
+        """
+        Conjunto de nombres de herramientas permitidas.
+        """
+
+        return {
+            tool.get("name")
+            for tool in (tools or [])
+            if isinstance(tool, dict)
+            and isinstance(tool.get("name"), str)
+        }
+
+    def _extract_tool_call(self, content):
+        """
+        Reconoce una respuesta JSON de herramienta.
+
+        Formato esperado:
+            {"tool": str, "arguments": dict, "reason": str}
+        """
+
+        if not content:
+            return None
+
+        try:
+            data = json.loads(content.strip())
+
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+        if not isinstance(data, dict):
+            return None
+
+        tool = data.get("tool")
+        arguments = data.get("arguments")
+
+        if not isinstance(tool, str):
+            return None
+
+        if not isinstance(arguments, dict):
+            return None
+
+        return {
+            "tool": tool,
+            "arguments": arguments,
+            "reason": data.get("reason", "")
+        }
+
 
 class LocalProvider(AIProvider):
     """
-    Proveedor local mediante Ollama.
+    Proveedor local mediante la API HTTP de Ollama.
 
-    Puede generar respuestas normales y recibir
-    información estructurada sobre las herramientas
-    disponibles.
+    Se utiliza HTTP directamente en lugar de la librería
+    ollama para reducir sobrecarga y mantener un control
+    directo sobre la petición al servidor local.
     """
 
     def __init__(self):
         super().__init__()
 
         self.name = "ollama"
-        self.version = "0.5.0"
+        self.version = "0.7.0"
 
         self.model = os.environ.get(
             "ILU_LOCAL_MODEL",
             "qwen2.5:0.5b-instruct"
         )
 
-    def _build_prompt(self, message, context, tools):
-        context = context or []
-        tools = tools or []
+        self.base_url = os.environ.get(
+            "ILU_OLLAMA_URL",
+            "http://127.0.0.1:11434"
+        ).rstrip("/")
 
-        prompt = (
-            "Eres I.L.U., Inteligencia Local Unificada.\n"
-            "Responde en español de forma clara, directa y útil.\n"
-            "No inventes herramientas ni acciones.\n\n"
-        )
-
-        if context:
-            prompt += "Memoria relevante:\n"
-
-            for item in context:
-                content = item.get("content")
-
-                if content:
-                    prompt += f"- {content}\n"
-
-            prompt += "\n"
-
-        if tools:
-            prompt += "Herramientas disponibles:\n"
-
-            for tool in tools:
-                prompt += (
-                    f"- {tool.get('name')}: "
-                    f"{tool.get('description')}\n"
-                )
-
-            prompt += (
-                "\nSi necesitas una herramienta, responde "
-                "EXACTAMENTE con JSON usando este formato:\n"
-                '{"tool":"nombre","arguments":{},"reason":"motivo"}\n\n'
-                "Si no necesitas una herramienta, responde "
-                "normalmente en español.\n\n"
+        self.timeout = int(
+            os.environ.get(
+                "ILU_OLLAMA_TIMEOUT",
+                "600"
             )
-
-        prompt += (
-            "Mensaje del usuario:\n"
-            f"{message}\n\n"
-            "Respuesta:"
         )
-
-        return prompt
-
-    def _extract_tool_call(self, content):
-        if not content:
-            return None
-
-        text = content.strip()
-
-        try:
-            data = json.loads(text)
-
-            if (
-                isinstance(data, dict)
-                and isinstance(data.get("tool"), str)
-                and isinstance(data.get("arguments"), dict)
-            ):
-                return {
-                    "tool": data["tool"],
-                    "arguments": data["arguments"],
-                    "reason": data.get("reason", "")
-                }
-
-        except json.JSONDecodeError:
-            pass
-
-        return None
 
     def generate(self, message, context=None, tools=None):
-        if ollama is None:
-            return {
-                "type": "text",
-                "content": (
-                    "I.L.U. está preparada para utilizar "
-                    "un modelo local, pero Ollama no está instalado."
-                )
-            }
-
-        prompt = self._build_prompt(
-            message,
-            context,
+        available_tools = self._available_tools(
             tools
         )
 
+        payload = {
+            "model": self.model,
+            "messages": self._messages(
+                message,
+                context
+            ),
+            "stream": False,
+            "think": False,
+            "options": {
+                "num_predict": 128
+            },
+            "keep_alive": "5m"
+        }
+
+        url = f"{self.base_url}/api/chat"
+
         try:
-            result = ollama.chat(
-                model=self.model,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=self.timeout
             )
 
-            content = result["message"]["content"].strip()
+            response.raise_for_status()
+
+            result = response.json()
+
+            message_data = result.get(
+                "message",
+                {}
+            )
+
+            content = message_data.get(
+                "content",
+                ""
+            )
+
+            if not isinstance(content, str):
+                content = str(content)
+
+            content = content.strip()
 
             tool_call = self._extract_tool_call(
                 content
             )
 
-            if tool_call:
+            if (
+                tool_call
+                and tool_call["tool"] in available_tools
+            ):
                 return {
                     "type": "tool_call",
                     "tool": tool_call["tool"],
@@ -159,12 +187,191 @@ class LocalProvider(AIProvider):
                 "content": content
             }
 
+        except requests.exceptions.Timeout:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. agotó el tiempo de espera "
+                    "del modelo local."
+                ),
+                "detail": (
+                    f"Timeout después de "
+                    f"{self.timeout} segundos."
+                )
+            }
+
+        except requests.exceptions.RequestException as error:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo comunicarse "
+                    "con Ollama."
+                ),
+                "detail": str(error)
+            }
+
         except Exception as error:
             return {
                 "type": "error",
                 "content": (
-                    "I.L.U. no pudo obtener respuesta "
-                    "del modelo local."
+                    "I.L.U. no pudo procesar "
+                    "la respuesta del modelo local."
+                ),
+                "detail": str(error)
+            }
+
+
+class OmniRouteProvider(AIProvider):
+    """
+    Proveedor mediante la API compatible con OpenAI de OmniRoute.
+
+    OmniRoute expone un gateway local compatible con OpenAI
+    (POST /v1/chat/completions) y se autentica con un
+    Bearer token.
+
+    La API key proviene de las variables de entorno:
+        ILU_OMNIROUTE_API_KEY
+    y jamás se registra en logs, mensajes de error ni código.
+    """
+
+    def __init__(self):
+        super().__init__()
+
+        self.name = "omniroute"
+        self.version = "0.8.0"
+
+        self.model = os.environ.get(
+            "ILU_OMNIROUTE_MODEL",
+            "openai/gpt-oss-120b"
+        )
+
+        self.base_url = os.environ.get(
+            "ILU_OMNIROUTE_URL",
+            "http://localhost:20128/v1"
+        ).rstrip("/")
+
+        # La clave viaja exclusivamente por variables de entorno.
+        # Se admite ILU_OMNIROUTE_API_KEY (especificada) con
+        # OMNIROUTE_API_KEY como respaldo para entornos actuales.
+        self.api_key = (
+            os.environ.get("ILU_OMNIROUTE_API_KEY")
+            or os.environ.get("OMNIROUTE_API_KEY")
+            or ""
+        )
+
+        self.timeout = 600
+
+    def _auth_headers(self):
+        return {
+            "Authorization": f"Bearer {self.api_key}"
+        }
+
+    def generate(self, message, context=None, tools=None):
+        if not self.api_key:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. no puede usar OmniRoute: la variable "
+                    "de entorno ILU_OMNIROUTE_API_KEY no está "
+                    "configurada."
+                ),
+                "detail": "missing_api_key"
+            }
+
+        available_tools = self._available_tools(
+            tools
+        )
+
+        payload = {
+            "model": self.model,
+            "messages": self._messages(
+                message,
+                context
+            ),
+            "stream": False
+        }
+
+        url = f"{self.base_url}/chat/completions"
+
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=self.timeout
+            )
+
+            response.raise_for_status()
+
+            result = response.json()
+
+            choices = result.get("choices") or []
+
+            message_data = (
+                choices[0].get("message", {})
+                if choices
+                else {}
+            )
+
+            content = message_data.get(
+                "content",
+                ""
+            )
+
+            if not isinstance(content, str):
+                content = str(content)
+
+            content = content.strip()
+
+            tool_call = self._extract_tool_call(
+                content
+            )
+
+            if (
+                tool_call
+                and tool_call["tool"] in available_tools
+            ):
+                return {
+                    "type": "tool_call",
+                    "tool": tool_call["tool"],
+                    "arguments": tool_call["arguments"],
+                    "reason": tool_call["reason"]
+                }
+
+            return {
+                "type": "text",
+                "content": content
+            }
+
+        except requests.exceptions.Timeout:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. agotó el tiempo de espera "
+                    "del proveedor OmniRoute."
+                ),
+                "detail": (
+                    f"Timeout después de "
+                    f"{self.timeout} segundos."
+                )
+            }
+
+        except requests.exceptions.RequestException as error:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo comunicarse "
+                    "con OmniRoute."
+                ),
+                "detail": str(error)
+            }
+
+        except Exception as error:
+            return {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo procesar "
+                    "la respuesta de OmniRoute."
                 ),
                 "detail": str(error)
             }
@@ -179,7 +386,7 @@ class CloudProvider(AIProvider):
         super().__init__()
 
         self.name = "cloud"
-        self.version = "0.5.0"
+        self.version = "0.7.0"
 
     def generate(self, message, context=None, tools=None):
         return {
@@ -196,6 +403,9 @@ def create_provider():
         "ILU_AI_PROVIDER",
         "local"
     ).lower()
+
+    if provider_name == "omniroute":
+        return OmniRouteProvider()
 
     if provider_name == "cloud":
         return CloudProvider()

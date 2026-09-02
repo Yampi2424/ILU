@@ -33,6 +33,31 @@ class ILUSettings:
             "DATABASE_URL"
         )
 
+        self.omniroute_url = os.environ.get(
+            "ILU_OMNIROUTE_URL",
+            "http://localhost:20128/v1"
+        ).rstrip("/")
+
+        self.omniroute_api_key = os.environ.get(
+            "ILU_OMNIROUTE_API_KEY",
+            ""
+        )
+
+        self.omniroute_model = os.environ.get(
+            "ILU_OMNIROUTE_MODEL",
+            "openai/gpt-oss-120b"
+        )
+
+        self.autonomy_level = os.environ.get(
+            "ILU_AUTONOMY",
+            "assisted"
+        ).lower()
+
+        self.tasks_path = os.environ.get(
+            "ILU_TASKS_PATH",
+            "memory/tasks.json"
+        )
+
     @property
     def is_cloud(self):
         return self.environment == "production"
@@ -48,6 +73,7 @@ class ILUSettings:
             "provider": self.provider,
             "environment": self.environment,
             "memory_mode": self.memory_mode,
+            "autonomy": self.autonomy_level,
             "database": (
                 "configured"
                 if self.has_database

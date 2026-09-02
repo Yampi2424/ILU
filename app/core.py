@@ -1,8 +1,23 @@
-from memory.store import MemoryStore
+from memory.router import MemoryRouter
 from app.reasoning import ILUReasoning
 from app.providers import create_provider
+from app.security import SecurityGate
+from app.audit import AuditLog
 from config.settings import ILUSettings
 from tools import create_tool_manager, ToolCall
+from tasks import TaskManager
+
+# Palabras vacías en español: se descartan como candidatas de búsqueda
+# para no inundar la memoria. El resto de tokens (incluso cortos como
+# "té" o "ia") SÍ se buscan.
+_MEMORY_STOPWORDS = {
+    "que", "qué", "sobre", "con", "para", "de", "el", "la", "los",
+    "las", "un", "una", "unos", "unas", "y", "o", "u", "a", "en",
+    "es", "son", "mi", "mis", "tu", "tus", "su", "sus", "por", "se",
+    "me", "te", "lo", "del", "al", "tengo", "cuando", "como", "cómo",
+    "esta", "este", "estos", "estas", "hay", "no", "si", "sí", "ya",
+    "fue", "era", "más", "mas", "muy", "bien", "puedes",
+}
 
 
 class ILUCore:
@@ -10,7 +25,14 @@ class ILUCore:
     Núcleo central de I.L.U.
 
     Flujo:
-    entrada -> memoria -> razonamiento -> plan -> herramienta -> respuesta
+    entrada
+        -> memoria
+        -> herramienta directa si corresponde
+        -> contexto
+        -> razonamiento
+        -> modelo local
+        -> memoria
+        -> respuesta
     """
 
     def __init__(self):
@@ -18,10 +40,13 @@ class ILUCore:
         self.name = self.settings.name
         self.version = self.settings.version
 
-        self.memory = MemoryStore()
+        self.memory = MemoryRouter()
         self.reasoning = ILUReasoning()
         self.provider = create_provider()
         self.tools = create_tool_manager()
+        self.security = SecurityGate()
+        self.audit = AuditLog()
+        self.tasks = TaskManager(path=self.settings.tasks_path)
 
     def _next_memory_key(self):
         memories = self.memory.load_all()
@@ -144,9 +169,12 @@ class ILUCore:
             return None
 
         words = [
-            word.strip("¿?¡!,.:;()[]{}")
+            word.strip("¿?¡!,.:;")
             for word in lowered.split()
-            if len(word.strip("¿?¡!,.:;()[]{}")) >= 4
+            if (
+                word.strip("¿?¡!,.:;") not in _MEMORY_STOPWORDS
+                and len(word.strip("¿?¡!,.:;")) >= 2
+            )
         ]
 
         results = []
@@ -164,10 +192,14 @@ class ILUCore:
         return results[:10]
 
     def _get_context(self, message):
+        """
+        Recupera recuerdos relevantes para una conversación normal.
+        """
+
         words = [
-            word.strip("¿?¡!,.:;()[]{}")
+            word.strip("¿?¡!,.:;")
             for word in message.lower().split()
-            if len(word.strip("¿?¡!,.:;()[]{}")) >= 5
+            if len(word.strip("¿?¡!,.:;")) >= 5
         ]
 
         if not words:
@@ -238,19 +270,6 @@ class ILUCore:
             "general"
         )
 
-    def _identify_tool(self, message):
-        lowered = message.lower()
-
-        if (
-            "hora" in lowered
-            or "fecha" in lowered
-            or "qué hora es" in lowered
-            or "que hora es" in lowered
-        ):
-            return "system_time"
-
-        return None
-
     def _available_tools(self):
         return self.tools.list_tools()
 
@@ -266,36 +285,575 @@ class ILUCore:
 
         return capabilities
 
-    def _create_tool_call(self, message, plan):
-        if "ejecutar_accion" not in plan:
-            return None
+    def _identify_tool(self, message):
+        """
+        Identifica herramientas simples y deterministas.
+
+        Actualmente system_time es la única herramienta que
+        I.L.U. puede identificar directamente.
+        """
+
+        lowered = message.lower().strip()
+
+        time_phrases = (
+            "qué hora es",
+            "que hora es",
+            "dime la hora",
+            "dime qué hora es",
+            "dime que hora es",
+            "hora actual",
+            "hora tenemos",
+            "qué hora tenemos",
+            "que hora tenemos",
+            "cuál es la hora",
+            "cual es la hora",
+            "fecha y hora",
+            "fecha hora",
+        )
+
+        if any(
+            phrase in lowered
+            for phrase in time_phrases
+        ):
+            if self.tools.has_tool("system_time"):
+                return "system_time"
+
+        return None
+
+    def _create_direct_tool_call(self, message):
+        """
+        Crea una ToolCall directamente para herramientas
+        simples, deterministas y seguras.
+        """
 
         tool_name = self._identify_tool(message)
 
         if not tool_name:
             return None
 
+        if not self.tools.has_tool(tool_name):
+            return None
+
         return ToolCall(
             tool=tool_name,
             arguments={},
-            reason="La solicitud requiere una herramienta disponible."
+            reason=(
+                "Herramienta identificada directamente "
+                "por I.L.U."
+            )
         )
 
-    def _execute_tool_call(self, tool_call):
+    def _task_command(self, message):
+        """
+        Comandos de tareas por lenguaje natural.
+
+        I.L.U. puede crear y consultar tareas directamente, sin pasar
+        por el LLM. La EJECUCIÓN de trabajos en segundo plano queda en
+        el servidor (catálogo de callables registrados); aquí solo se
+        gestiona su registro y estado.
+        """
+        lowered = message.lower().strip()
+
+        create_prefixes = (
+            "crea una tarea",
+            "crea la tarea",
+            "registra una tarea",
+            "nueva tarea",
+            "crea tarea",
+        )
+
+        for prefix in create_prefixes:
+            if lowered.startswith(prefix):
+                title = (
+                    message[len(prefix):].strip().lstrip(": ,.;-")
+                )
+
+                if not title:
+                    return {
+                        "success": True,
+                        "input": message,
+                        "intent": "task_create_pending",
+                        "response": (
+                            "¿Qué tarea quieres que registre? "
+                            "Ejemplo: crea una tarea: "
+                            "revisar los informes."
+                        ),
+                        "core": self.name,
+                        "version": self.version
+                    }
+
+                task = self.tasks.create(title=title)
+
+                self.audit.record(
+                    actor="ilu",
+                    action="task_create",
+                    task_id=task["id"],
+                    title=title
+                )
+
+                return {
+                    "success": True,
+                    "input": message,
+                    "intent": "task_create",
+                    "response": (
+                        f"Tarea '{task['title']}' creada "
+                        f"(ID: {task['id']})."
+                    ),
+                    "task_id": task["id"],
+                    "core": self.name,
+                    "version": self.version
+                }
+
+        list_phrases = (
+            "qué tareas",
+            "que tareas",
+            "lista de tareas",
+            "listar tareas",
+            "mis tareas",
+            "estado de las tareas",
+            "estado de mis tareas",
+        )
+
+        if any(
+            phrase in lowered
+            for phrase in list_phrases
+        ):
+            tasks = self.tasks.list_tasks()[:10]
+
+            if not tasks:
+                return {
+                    "success": True,
+                    "input": message,
+                    "intent": "task_list",
+                    "response": (
+                        "No hay tareas registradas."
+                    ),
+                    "tasks": [],
+                    "core": self.name,
+                    "version": self.version
+                }
+
+            lines = [
+                f"{task['title']} — {task['state']} "
+                f"({task['progress']}%)"
+                for task in tasks
+            ]
+
+            return {
+                "success": True,
+                "input": message,
+                "intent": "task_list",
+                "response": (
+                    f"{len(tasks)} tareas: "
+                    + " | ".join(lines)
+                ),
+                "tasks": [
+                    {
+                        "id": task["id"],
+                        "title": task["title"],
+                        "state": task["state"],
+                        "progress": task["progress"]
+                    }
+                    for task in tasks
+                ],
+                "core": self.name,
+                "version": self.version
+            }
+
+        status_phrases = (
+            "estado de la tarea",
+            "cómo va la tarea",
+            "como va la tarea",
+            "progreso de la tarea",
+            "cómo van las tareas",
+            "como van las tareas",
+            "progreso de mis tareas",
+        )
+
+        if any(
+            phrase in lowered
+            for phrase in status_phrases
+        ):
+            latest = self.tasks.list_tasks()
+
+            if not latest:
+                return {
+                    "success": True,
+                    "input": message,
+                    "intent": "task_status",
+                    "response": "No hay tareas todavía.",
+                    "core": self.name,
+                    "version": self.version
+                }
+
+            task = latest[0]
+
+            return {
+                "success": True,
+                "input": message,
+                "intent": "task_status",
+                "response": (
+                    f"'{task['title']}' — estado "
+                    f"{task['state']}, progreso "
+                    f"{task['progress']}%."
+                ),
+                "task_id": task["id"],
+                "state": task["state"],
+                "progress": task["progress"],
+                "core": self.name,
+                "version": self.version
+            }
+
+        return None
+
+    def _memory_reply(self, response, intent, **extra):
+        payload = {
+            "success": True,
+            "input": None,
+            "intent": intent,
+            "response": response,
+            "core": self.name,
+            "version": self.version
+        }
+
+        payload.update(extra)
+        return payload
+
+    def _memory_command(self, message):
+        """
+        Administración de memoria por lenguaje natural.
+
+        I.L.U. puede olvidar, corregir información antigua y consultar
+        distintos tipos de memoria directamente, sin pasar por el LLM.
+        La EJECUCIÓN queda limitada a la memoria (nada peligroso); el
+        resto del pipeline sigue intacto.
+        """
+        lowered = message.lower().strip()
+
+        # --------------------------------------------------------------
+        # OLVIDAR
+        # --------------------------------------------------------------
+        forget_prefixes = (
+            "olvida que ",
+            "olvida ",
+            "borra de tu memoria ",
+            "olvida la memoria de ",
+        )
+
+        for prefix in forget_prefixes:
+            if lowered.startswith(prefix):
+                target = message[len(prefix):].strip()
+
+                if not target:
+                    return None
+
+                deleted = self.memory.forget(target)
+
+                if deleted:
+                    return self._memory_reply(
+                        f"Olvidado: {deleted.content}",
+                        "memory_forget"
+                    )
+
+                return self._memory_reply(
+                    "No encontré ese recuerdo para olvidar.",
+                    "memory_forget"
+                )
+
+        # --------------------------------------------------------------
+        # CORREGIR información antigua
+        # --------------------------------------------------------------
+        correction_prefixes = (
+            "corrige que ",
+            "actualiza que ",
+            "corrige: ",
+        )
+
+        for prefix in correction_prefixes:
+            if lowered.startswith(prefix):
+                rest = message[len(prefix):].strip()
+
+                if " por " not in rest:
+                    return None
+
+                old, new = rest.split(" por ", 1)
+
+                updated = self.memory.correct(
+                    old.strip(),
+                    new.strip()
+                )
+
+                if updated:
+                    return self._memory_reply(
+                        f"Corregido. Ahora recuerdo: "
+                        f"{updated.content}",
+                        "memory_update"
+                    )
+
+                return self._memory_reply(
+                    "No encontré qué corregir.",
+                    "memory_update"
+                )
+
+        # --------------------------------------------------------------
+        # CONSULTAR por tipo
+        # --------------------------------------------------------------
+        if (
+            "habilidades" in lowered
+            or "qué sabes hacer" in lowered
+            or "que sabes hacer" in lowered
+        ):
+            skills = self.memory.list_by_type(
+                "skill",
+                limit=20
+            )
+
+            if not skills:
+                return self._memory_reply(
+                    "Aún no he registrado habilidades.",
+                    "memory_read"
+                )
+
+            names = [skill.content for skill in skills]
+
+            return self._memory_reply(
+                "Mis habilidades registradas: " + " | ".join(names),
+                "memory_read",
+                memory_count=len(names)
+            )
+
+        if (
+            "cuántos recuerdos" in lowered
+            or "cuántas memorias" in lowered
+            or "cuantas memorias" in lowered
+        ):
+            stats = self.memory.stats()
+
+            if stats["total"] == 0:
+                return self._memory_reply(
+                    "No tengo recuerdos guardados todavía.",
+                    "memory_read",
+                    memory_count=0
+                )
+
+            counts = ", ".join(
+                f"{name}={count}"
+                for name, count in sorted(
+                    stats["counts"].items()
+                )
+            )
+
+            return self._memory_reply(
+                f"Tengo {stats['total']} recuerdos: {counts}.",
+                "memory_read",
+                memory_count=stats["total"]
+            )
+
+        return None
+
+    def _execute_tool_call(self, tool_call, mode="direct"):
+        """
+        Ejecuta una ToolCall a través de la compuerta de autorización.
+
+        Una respuesta del modelo NUNCA equivale a permiso de ejecución:
+        toda herramienta pasa primero por SecurityGate y se audita.
+        """
         if tool_call is None:
             return None
 
         if not self.tools.has_tool(tool_call.tool):
+            self.audit.record(
+                actor="ilu",
+                action="tool_attempt",
+                tool=tool_call.tool,
+                decision="deny",
+                mode=mode,
+                reason="tool_not_available"
+            )
+
             return {
                 "success": False,
                 "error": "tool_not_available",
                 "tool": tool_call.tool
             }
 
-        return self.tools.execute(
-            tool_call.tool,
-            **tool_call.arguments
+        permission = self.tools.get_permission(
+            tool_call.tool
         )
+
+        decision = self.security.decide(
+            tool_call.tool,
+            permission,
+            mode=mode
+        )
+
+        self.audit.record(
+            actor="ilu",
+            action="tool_attempt",
+            tool=tool_call.tool,
+            permission=permission,
+            decision=decision["decision"],
+            mode=mode,
+            reason=decision["reason"]
+        )
+
+        if decision["decision"] != "allow":
+            return {
+                "success": False,
+                "error": decision["reason"],
+                "tool": tool_call.tool,
+                "authorization": decision["decision"]
+            }
+
+        try:
+            result = self.tools.execute(
+                tool_call.tool,
+                **tool_call.arguments
+            )
+
+        except Exception as error:
+            self.audit.record(
+                actor="ilu",
+                action="tool_result",
+                tool=tool_call.tool,
+                success=False,
+                error="tool_execution_failed"
+            )
+
+            return {
+                "success": False,
+                "error": str(error),
+                "tool": tool_call.tool
+            }
+
+        self.audit.record(
+            actor="ilu",
+            action="tool_result",
+            tool=tool_call.tool,
+            success=result.get("success", False)
+        )
+
+        return result
+
+    def _build_tool_response(
+        self,
+        message,
+        tool_call,
+        tool_result,
+        source="direct_tool"
+    ):
+        if not tool_result:
+            return None
+
+        if not tool_result.get("success"):
+            tool_name = (
+                tool_call.tool
+                if tool_call
+                else "?"
+            )
+
+            if (
+                tool_result.get("authorization")
+                == "ask"
+            ):
+                reason = tool_result.get(
+                    "error",
+                    ""
+                )
+
+                if reason == "manual_mode_proposal":
+                    response = (
+                        f"I.L.U. está en modo manual y no ejecuta "
+                        f"la herramienta '{tool_name}' por su cuenta."
+                    )
+                else:
+                    response = (
+                        f"I.L.U. necesita autorización humana para "
+                        f"ejecutar la herramienta '{tool_name}'."
+                    )
+            else:
+                response = (
+                    "I.L.U. no pudo ejecutar "
+                    "la herramienta."
+                )
+
+            return {
+                "success": False,
+                "input": message,
+                "intent": "tool_error",
+                "response": response,
+                "context": "",
+                "reasoning": {
+                    "type": source,
+                    "context_used": 0
+                },
+                "provider": {
+                    "name": self.provider.name,
+                    "version": self.provider.version
+                },
+                "tools": self._tool_capabilities(),
+                "tool": (
+                    tool_call.tool
+                    if tool_call
+                    else None
+                ),
+                "tool_call": (
+                    tool_call.to_dict()
+                    if tool_call
+                    else None
+                ),
+                "tool_result": tool_result,
+                "authorization": tool_result.get(
+                    "authorization"
+                ),
+                "core": self.name,
+                "version": self.version
+            }
+
+        result = tool_result.get("result", {})
+
+        if (
+            isinstance(result, dict)
+            and "datetime" in result
+        ):
+            response = (
+                "La fecha y hora de tu sistema es: "
+                f"{result['datetime']}"
+            )
+        else:
+            response = str(result)
+
+        self._save_memory(
+            message,
+            memory_type="conversation",
+            importance=3
+        )
+
+        return {
+            "success": True,
+            "input": message,
+            "intent": "tool_use",
+            "response": response,
+            "context": "",
+            "reasoning": {
+                "type": source,
+                "context_used": 0
+            },
+            "provider": {
+                "name": self.provider.name,
+                "version": self.provider.version
+            },
+            "tools": self._tool_capabilities(),
+            "tool": tool_result.get("tool"),
+            "tool_call": (
+                tool_call.to_dict()
+                if tool_call
+                else None
+            ),
+            "tool_result": result,
+            "core": self.name,
+            "version": self.version
+        }
 
     def process(self, message):
         if not isinstance(message, str):
@@ -312,7 +870,30 @@ class ILUCore:
                 "error": "empty_message"
             }
 
-        explicit_memory = self._save_explicit_memory(message)
+        # ==========================================================
+        # 0.5 ADMINISTRACIÓN DE MEMORIA
+        #
+        # I.L.U. gestiona su propia memoria por lenguaje natural:
+        # olvidar, corregir información antigua y consultar por tipo.
+        # Toda acción aquí es sobre memoria (nada peligroso) y no
+        # requiere autorización de herramientas.
+        # ==========================================================
+
+        memory_command = self._memory_command(
+            message
+        )
+
+        if memory_command is not None:
+            memory_command["input"] = message
+            return memory_command
+
+        # ==========================================================
+        # 1. MEMORIA EXPLÍCITA
+        # ==========================================================
+
+        explicit_memory = self._save_explicit_memory(
+            message
+        )
 
         if explicit_memory:
             return {
@@ -322,21 +903,32 @@ class ILUCore:
                 "memory_type": explicit_memory["type"],
                 "importance": explicit_memory["importance"],
                 "response": (
-                    f"Recordado: {explicit_memory['content']}"
+                    f"Recordado: "
+                    f"{explicit_memory['content']}"
                 ),
                 "core": self.name,
                 "version": self.version
             }
 
-        memory_results = self._search_memory(message)
+        # ==========================================================
+        # 2. BÚSQUEDA EXPLÍCITA DE MEMORIA
+        # ==========================================================
+
+        memory_results = self._search_memory(
+            message
+        )
 
         if memory_results is not None:
             if not memory_results:
-                response = "No encontré recuerdos relacionados."
+                response = (
+                    "No encontré recuerdos relacionados."
+                )
             else:
                 response = (
                     "Recuerdo: "
-                    + self._format_memories(memory_results)
+                    + self._format_memories(
+                        memory_results
+                    )
                 )
 
             return {
@@ -344,12 +936,65 @@ class ILUCore:
                 "input": message,
                 "intent": "memory_read",
                 "response": response,
-                "memory_count": len(memory_results),
+                "memory_count": len(
+                    memory_results
+                ),
                 "core": self.name,
                 "version": self.version
             }
 
-        context = self._get_context(message)
+        # ==========================================================
+        # 2.5 TAREAS (lenguaje natural)
+        #
+        # I.L.U. gestiona su registro de tareas sin depender del LLM:
+        # crear, listar y consultar estado. La ejecución en segundo
+        # plano queda registrada en el servidor.
+        # ==========================================================
+
+        task_command = self._task_command(
+            message
+        )
+
+        if task_command is not None:
+            return task_command
+
+        # ==========================================================
+        # 3. HERRAMIENTA DIRECTA
+        #
+        # Las herramientas simples, seguras y deterministas
+        # se ejecutan sin llamar a Ollama.
+        # ==========================================================
+
+        direct_tool_call = (
+            self._create_direct_tool_call(
+                message
+            )
+        )
+
+        if direct_tool_call:
+            direct_tool_result = (
+                self._execute_tool_call(
+                    direct_tool_call
+                )
+            )
+
+            return self._build_tool_response(
+                message,
+                direct_tool_call,
+                direct_tool_result
+            )
+
+        # ==========================================================
+        # 4. CONTEXTO
+        # ==========================================================
+
+        context = self._get_context(
+            message
+        )
+
+        # ==========================================================
+        # 5. RAZONAMIENTO
+        # ==========================================================
 
         analysis = self.reasoning.analyze(
             message,
@@ -363,27 +1008,18 @@ class ILUCore:
             analysis
         )
 
-        plan = reasoning.get("plan", [])
+        # ==========================================================
+        # 6. RESPUESTA BÁSICA
+        # ==========================================================
 
-        tool_call = self._create_tool_call(
-            message,
-            plan
+        basic_response, intent = (
+            self._basic_response(
+                message
+            )
         )
 
-        tool_result = self._execute_tool_call(
-            tool_call
-        )
-
-        if tool_result and tool_result.get("success"):
-            result = tool_result.get("result", {})
-
-            if "datetime" in result:
-                response = (
-                    "La fecha y hora de tu sistema es: "
-                    f"{result['datetime']}"
-                )
-            else:
-                response = str(result)
+        if basic_response:
+            response = basic_response
 
             self._save_memory(
                 message,
@@ -394,38 +1030,111 @@ class ILUCore:
             return {
                 "success": True,
                 "input": message,
-                "intent": "tool_use",
+                "intent": intent,
                 "response": response,
-                "tool": tool_result.get("tool"),
-                "tool_call": (
-                    tool_call.to_dict()
-                    if tool_call
-                    else None
+                "context": self._format_memories(
+                    context
                 ),
-                "tool_result": result,
                 "reasoning": {
-                    "type": reasoning.get("reasoning_type"),
+                    "type": reasoning.get(
+                        "reasoning_type"
+                    ),
+                    "context_used": reasoning.get(
+                        "context_used",
+                        0
+                    ),
                     "complexity": reasoning.get(
                         "complexity",
                         "simple"
-                    ),
-                    "plan": plan
+                    )
                 },
+                "provider": {
+                    "name": self.provider.name,
+                    "version": self.provider.version
+                },
+                "tools": self._tool_capabilities(),
+                "tool": None,
+                "tool_call": None,
+                "tool_result": None,
                 "core": self.name,
                 "version": self.version
             }
 
-        basic_response, intent = self._basic_response(
-            message
+        # ==========================================================
+        # 7. MODELO + HERRAMIENTAS
+        #
+        # I.L.U. entrega al modelo la lista de herramientas
+        # registradas y permitidas para que el modelo pueda
+        # solicitarlas cuando la tarea lo necesite.
+        #
+        # La ejecución se restringe al registro de herramientas:
+        # solo se ejecutan herramientas registradas y no
+        # bloqueadas (ToolManager). Si el modelo propone una
+        # herramienta desconocida, la petición se rechaza de
+        # forma honesta y no se ejecuta nada.
+        # ==========================================================
+
+        model_result = self.provider.generate(
+            message,
+            context,
+            self._available_tools()
         )
 
-        if basic_response:
-            response = basic_response
-        else:
-            response = self.provider.generate(
-                message,
-                context
+        if isinstance(model_result, dict):
+            model_type = model_result.get(
+                "type",
+                "text"
             )
+
+            if model_type == "tool_call":
+                tool_call = ToolCall(
+                    tool=model_result.get(
+                        "tool",
+                        ""
+                    ),
+                    arguments=model_result.get(
+                        "arguments",
+                        {}
+                    ),
+                    reason=model_result.get(
+                        "reason",
+                        ""
+                    )
+                )
+
+                tool_result = self._execute_tool_call(
+                    tool_call,
+                    mode="model"
+                )
+
+                tool_response = self._build_tool_response(
+                    message,
+                    tool_call,
+                    tool_result,
+                    source="model_tool"
+                )
+
+                if tool_response:
+                    return tool_response
+
+            if model_type == "error":
+                response = model_result.get(
+                    "content",
+                    "I.L.U. no pudo obtener una respuesta."
+                )
+
+            else:
+                response = model_result.get(
+                    "content",
+                    "I.L.U. no recibió una respuesta válida."
+                )
+
+        else:
+            response = str(model_result)
+
+        # ==========================================================
+        # 8. MEMORIA DE CONVERSACIÓN
+        # ==========================================================
 
         self._save_memory(
             message,
@@ -438,9 +1147,13 @@ class ILUCore:
             "input": message,
             "intent": intent,
             "response": response,
-            "context": self._format_memories(context),
+            "context": self._format_memories(
+                context
+            ),
             "reasoning": {
-                "type": reasoning.get("reasoning_type"),
+                "type": reasoning.get(
+                    "reasoning_type"
+                ),
                 "context_used": reasoning.get(
                     "context_used",
                     0
@@ -448,14 +1161,16 @@ class ILUCore:
                 "complexity": reasoning.get(
                     "complexity",
                     "simple"
-                ),
-                "plan": plan
+                )
             },
             "provider": {
                 "name": self.provider.name,
                 "version": self.provider.version
             },
             "tools": self._tool_capabilities(),
+            "tool": None,
+            "tool_call": None,
+            "tool_result": None,
             "core": self.name,
             "version": self.version
         }

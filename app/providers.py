@@ -3,6 +3,7 @@ import os
 
 import requests
 
+from app import toolshape
 from config.identity import ilu_system_prompt
 
 
@@ -87,6 +88,68 @@ class AIProvider:
             "reason": data.get("reason", "")
         }
 
+    def _decide_result(self, message_data, available_tools):
+        """
+        Traduce la respuesta de un proveedor a la forma canónica de I.L.U.
+
+        Orden de preferencia:
+          1) tool-call NATIVO (Ollama u OpenAI-compat, vía toolshape):
+             la más fiable, porque el proveedor la declara estructurada.
+          2) formato heredado JSON-en-content (modelos sin tool calling).
+
+        En ambos casos se aplica el mismo gateo por `available_tools`:
+        una tool no permitida jamás se ejecuta (fail-closed), se responde
+        como texto.
+        """
+        content = message_data.get("content", "")
+
+        if content is None:
+            # Sin contenido de texto (p. ej. un tool_call nativo denegado):
+            # se trata como vacío, nunca como la cadena "None".
+            content = ""
+        elif not isinstance(content, str):
+            content = str(content)
+
+        content = content.strip()
+
+        # 1) Tool calling nativo del proveedor.
+        for call in toolshape.parse_tool_calls(message_data):
+            if call["tool"] in available_tools:
+                return {
+                    "type": "tool_call",
+                    "tool": call["tool"],
+                    "arguments": call["arguments"],
+                    "reason": call.get("reason", ""),
+                }
+
+            # No está permitida: fail-closed, se reporta como texto.
+            if content:
+                return {"type": "text", "content": content}
+
+            return {
+                "type": "text",
+                "content": (
+                    f"(El modelo solicitó la herramienta "
+                    f"'{call['tool']}' pero no está disponible.)"
+                ),
+            }
+
+        # 2) Formato heredado: JSON embebido en el content.
+        tool_call = self._extract_tool_call(content)
+
+        if (
+            tool_call
+            and tool_call["tool"] in available_tools
+        ):
+            return {
+                "type": "tool_call",
+                "tool": tool_call["tool"],
+                "arguments": tool_call["arguments"],
+                "reason": tool_call["reason"]
+            }
+
+        return {"type": "text", "content": content}
+
 
 class LocalProvider(AIProvider):
     """
@@ -139,6 +202,13 @@ class LocalProvider(AIProvider):
             "keep_alive": "5m"
         }
 
+        # Herramientas en formato nativo "functions" (el que Ollama entiende)
+        # -> el modelo puede responder con tool_calls estructurados.
+        native_tools = toolshape.openai_functions(tools)
+
+        if native_tools:
+            payload["tools"] = native_tools
+
         url = f"{self.base_url}/api/chat"
 
         try:
@@ -157,35 +227,10 @@ class LocalProvider(AIProvider):
                 {}
             )
 
-            content = message_data.get(
-                "content",
-                ""
+            return self._decide_result(
+                message_data,
+                available_tools
             )
-
-            if not isinstance(content, str):
-                content = str(content)
-
-            content = content.strip()
-
-            tool_call = self._extract_tool_call(
-                content
-            )
-
-            if (
-                tool_call
-                and tool_call["tool"] in available_tools
-            ):
-                return {
-                    "type": "tool_call",
-                    "tool": tool_call["tool"],
-                    "arguments": tool_call["arguments"],
-                    "reason": tool_call["reason"]
-                }
-
-            return {
-                "type": "text",
-                "content": content
-            }
 
         except requests.exceptions.Timeout:
             return {
@@ -291,6 +336,13 @@ class OmniRouteProvider(AIProvider):
             "stream": False
         }
 
+        # Herramientas nativas en formato OpenAI function -> el modelo puede
+        # responder con tool_calls estructurados (arguments como string JSON).
+        native_tools = toolshape.openai_functions(tools)
+
+        if native_tools:
+            payload["tools"] = native_tools
+
         url = f"{self.base_url}/chat/completions"
 
         try:
@@ -313,35 +365,10 @@ class OmniRouteProvider(AIProvider):
                 else {}
             )
 
-            content = message_data.get(
-                "content",
-                ""
+            return self._decide_result(
+                message_data,
+                available_tools
             )
-
-            if not isinstance(content, str):
-                content = str(content)
-
-            content = content.strip()
-
-            tool_call = self._extract_tool_call(
-                content
-            )
-
-            if (
-                tool_call
-                and tool_call["tool"] in available_tools
-            ):
-                return {
-                    "type": "tool_call",
-                    "tool": tool_call["tool"],
-                    "arguments": tool_call["arguments"],
-                    "reason": tool_call["reason"]
-                }
-
-            return {
-                "type": "text",
-                "content": content
-            }
 
         except requests.exceptions.Timeout:
             return {
@@ -411,3 +438,81 @@ def create_provider():
         return CloudProvider()
 
     return LocalProvider()
+
+
+class FallbackProvider(AIProvider):
+    """
+    Envuelve un proveedor PRIMARIO (p. ej. OmniRoute/cloud) y, si este
+    devuelve un error de comunicación/configuración, delega en un
+    proveedor de RESPALDO (p. ej. Ollama local).
+
+    Objetivo: I.L.U. deja de depender de un único punto de fallo. Si el
+    cloud está caído o sin clave, sigue respondiendo con el motor local.
+
+    No cambia la arquitectura: la inteligencia propone, la compuerta
+    decide, y aquí solo se elige QUÉ motor generó la propuesta.
+    """
+
+    def __init__(self, primary=None, fallback=None):
+        super().__init__()
+
+        self.primary = primary or LocalProvider()
+        self.fallback = fallback or LocalProvider()
+
+        self.name = self.primary.name
+        self.version = self.primary.version
+
+    def generate(self, message, context=None, tools=None):
+        result = self.primary.generate(
+            message,
+            context=context,
+            tools=tools
+        )
+
+        # Un error del primario (red caída, timeout, sin clave) dispara
+        # el fallback al respaldo local.
+        if isinstance(result, dict) and result.get("type") == "error":
+            fallback_result = self.fallback.generate(
+                message,
+                context=context,
+                tools=tools
+            )
+
+            if isinstance(fallback_result, dict):
+                # Visible para el orquestador/API: qué motor respondió.
+                fallback_result["fallback"] = True
+                fallback_result["provider_used"] = self.fallback.name
+                fallback_result["provider_used_version"] = (
+                    self.fallback.version
+                )
+
+            return fallback_result
+
+        if isinstance(result, dict):
+            result.setdefault("provider_used", self.primary.name)
+            result.setdefault("provider_used_version", self.primary.version)
+
+        return result
+
+
+def create_runtime_provider():
+    """
+    Proveedor que I.L.U. usa en ejecución.
+
+    Igual que `create_provider()`, salvo que con `ILU_AI_PROVIDER=omniroute`
+    devuelve un `FallbackProvider(OmniRoute, Local)`: si el cloud falla,
+    cae en Ollama local. Para `local`/`cloud`/desconocido devuelve lo mismo
+    que `create_provider()` (sin envolver).
+    """
+    provider_name = os.environ.get(
+        "ILU_AI_PROVIDER",
+        "local"
+    ).lower()
+
+    if provider_name == "omniroute":
+        return FallbackProvider(
+            primary=OmniRouteProvider(),
+            fallback=LocalProvider()
+        )
+
+    return create_provider()

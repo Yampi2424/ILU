@@ -463,3 +463,65 @@ autonomía, registrarse ni activar emergencias (testeado
   ahora); la política de retención es PLANIFICADO.
 - Registro/verificación de dispositivos y protocolos de emergencia
   implementados; la UX web para los mismos es PLANIFICADO.
+
+## Bloque 9 · Tool-calling nativo y fallback cloud→local
+
+### Qué se construyó
+
+- **`app/toolshape.py` (NUEVO)** — traducción de tool-shapes entre
+  proveedores. I.L.U. habla UNA forma canónica
+  (`[{"name", "description", "permission"}]` para tools;
+  `{"tool", "arguments", "reason"}` para tool_calls) y esta capa la
+  traduce al wire-format nativo:
+  - `openai_functions(tools)` → array `tools` estilo OpenAI function
+    (el MISMO esquema que entienden Ollama nativo y OpenAI-compat /
+    OmniRoute).
+  - `parse_tool_calls(message)` → normaliza `message.tool_calls` de
+    AMBAS variantes: Ollama entrega `function.arguments` como **objeto
+    parseado (dict)**; OpenAI-compat como **STRING JSON** (a veces
+    `"null"` o ausente). El argumento `"id"` (OpenAI) se conserva; el
+    `"index"` (Ollama) es opcional y no se exige.
+- **Tool calling NATIVO en ambos providers** — `LocalProvider` y
+  `OmniRouteProvider` ahora incluyen `tools` en el payload cuando se los
+  pasa, y `_decide_result` (base) da prioridad a los tool_calls nativos
+  sobre el formato heredado JSON-en-content. Ambos aplican el mismo gateo
+  por `available_tools`: una tool nativa no permitida jamás se ejecuta
+  (fail-closed), se responde como texto.
+- **`FallbackProvider` + `create_runtime_provider()`** — con
+  `ILU_AI_PROVIDER=omniroute`, I.L.U. ya no depende de un único punto de
+  fallo: si OmniRoute devuelve un error de red/configuración, se delega
+  en Ollama local. El resultado anota `fallback: true` y
+  `provider_used` para que el orquestador sepa qué motor generó la
+  propuesta.
+- **Fix real encontrado por los tests**: `_decide_result` trataba
+  `content: None` (típico de un tool_call nativo) como la cadena
+  `"None"`. Ahora `None` se trata como vacío, de modo que un tool_call
+  nativo denegado responde el mensaje fail-closed correcto.
+
+### Archivos
+
+- **Nuevos**: `app/toolshape.py`, `tests/test_toolshape.py`,
+  `tests/test_fallback.py`
+- **Modificados**: `app/providers.py`, `app/core.py`,
+  `tests/test_providers_local.py`, `tests/test_providers_omniroute.py`
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **350 passed** (27 nuevos del Bloque 9; cero
+  regresiones sobre Bloques 1–8).
+- Fallback verificado de punta a punta:
+  `test_real_omniroute_error_falls_back_to_local` — OmniRoute devuelve
+  HTTP 500 y la respuesta final proviene de Ollama local con
+  `fallback: true`.
+
+### Limitaciones / PLANIFICADO
+
+- El fallback SOLO cubre el camino cloud→local. El camino inverso
+  (local caído, cloud sano) no está envuelto: con el proveedor por
+  defecto `local` no hay respaldo.
+- `keep_alive`/`num_predict` son específicos de Ollama; OmniRoute envía
+  el payload OpenAI estándar (los parámetros por proveedor se
+  mantienen dentro de cada clase).
+- El tool-shape soporta actualmente parámetros vacíos (sin JSON-schema)
+  en `properties`; el refinado del esquema por tool es PLANIFICADO.

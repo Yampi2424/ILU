@@ -147,3 +147,72 @@ def test_local_timeout(monkeypatch):
 
     assert result["type"] == "error"
     assert "tiempo" in result["content"]
+
+def test_local_native_tool_call_dict_arguments(monkeypatch):
+    """Ollama nativo entrega tool_calls con arguments como objeto parseado."""
+    provider = make_provider(monkeypatch)
+
+    payload = {
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {
+                    "function": {
+                        "name": "system_time",
+                        "arguments": {"tz": "UTC"},
+                    },
+                    "index": 0,
+                }
+            ],
+        }
+    }
+
+    with mock.patch(
+        "app.providers.requests.post",
+        return_value=FakeResponse(payload)
+    ) as post:
+        result = provider.generate(
+            "hora",
+            tools=[{"name": "system_time"}]
+        )
+
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "system_time"
+    assert result["arguments"] == {"tz": "UTC"}
+
+    # El payload nativo incluye las tools en formato function.
+    sent = post.call_args.kwargs["json"]
+    assert sent["tools"] == [
+        {
+            "type": "function",
+            "function": {
+                "name": "system_time",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+
+def test_local_native_tool_call_denied(monkeypatch):
+    """Un tool_call nativo no permitido jamás se ejecuta (fail-closed)."""
+    provider = make_provider(monkeypatch)
+
+    payload = {
+        "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"function": {"name": "shell", "arguments": {}}}
+            ],
+        }
+    }
+
+    with mock.patch(
+        "app.providers.requests.post",
+        return_value=FakeResponse(payload)
+    ):
+        result = provider.generate("ejecuta")
+
+    assert result["type"] == "text"
+    assert "shell" in result["content"]

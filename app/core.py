@@ -1,6 +1,6 @@
 from memory.router import MemoryRouter
 from app.reasoning import ILUReasoning
-from app.providers import create_provider
+from app.providers import create_runtime_provider
 from app.security import SecurityGate
 from app.audit import AuditLog
 from config.settings import ILUSettings
@@ -74,7 +74,9 @@ class ILUCore:
 
         self.memory = MemoryRouter()
         self.reasoning = ILUReasoning()
-        self.provider = create_provider()
+        # Proveedor de ejecución: con OmniRoute, envuelto para caer en
+        # Ollama local si el cloud falla (Bloque 9).
+        self.provider = create_runtime_provider()
         self.tools = create_tool_manager()
         self.security = SecurityGate()
         self.audit = AuditLog()
@@ -1842,6 +1844,29 @@ class ILUCore:
             importance=3
         )
 
+        # Bloque 9: cuál motor respondió (primario o, si se hizo fallback,
+        # el respaldo local). Solo aplica cuando el resultado vino del
+        # modelo; en el resto de caminos es el proveedor por defecto.
+        provider_used = (
+            model_result.get("provider_used")
+            if isinstance(model_result, dict)
+            else None
+        )
+
+        provider_version = (
+            model_result.get("provider_used_version")
+            if isinstance(model_result, dict)
+            else None
+        )
+
+        provider_meta = {
+            "name": provider_used or self.provider.name,
+            "version": provider_version or self.provider.version,
+        }
+
+        if isinstance(model_result, dict) and model_result.get("fallback"):
+            provider_meta["fallback"] = True
+
         return {
             "success": True,
             "input": message,
@@ -1863,10 +1888,7 @@ class ILUCore:
                     "simple"
                 )
             },
-            "provider": {
-                "name": self.provider.name,
-                "version": self.provider.version
-            },
+            "provider": provider_meta,
             "tools": self._tool_capabilities(),
             "tool": None,
             "tool_call": None,

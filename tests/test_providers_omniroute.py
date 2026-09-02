@@ -159,3 +159,75 @@ def test_omniroute_http_error_does_not_leak_key(monkeypatch):
     assert result["type"] == "error"
     assert "supersecreta" not in result.get("detail", "")
     assert "supersecreta" not in result.get("content", "")
+
+def test_omniroute_native_tool_call_string_arguments(monkeypatch):
+    """OpenAI-compat entrega tool_calls con arguments como STRING JSON."""
+    provider = make_provider(monkeypatch)
+
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "id": "call_abc",
+                            "type": "function",
+                            "function": {
+                                "name": "system_time",
+                                "arguments": '{"tz": "UTC"}',
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+    with mock.patch(
+        "app.providers.requests.post",
+        return_value=FakeResponse(payload)
+    ):
+        result = provider.generate(
+            "hora",
+            tools=[{"name": "system_time"}]
+        )
+
+    assert result["type"] == "tool_call"
+    assert result["tool"] == "system_time"
+    assert result["arguments"] == {"tz": "UTC"}
+
+
+def test_omniroute_native_tool_call_denied(monkeypatch):
+    """Un tool_call nativo no permitido jamás se ejecuta (fail-closed)."""
+    provider = make_provider(monkeypatch)
+
+    payload = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": None,
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "shell",
+                                "arguments": "{}",
+                            },
+                        }
+                    ],
+                }
+            }
+        ]
+    }
+
+    with mock.patch(
+        "app.providers.requests.post",
+        return_value=FakeResponse(payload)
+    ):
+        result = provider.generate("ejecuta")
+
+    assert result["type"] == "text"
+    assert "shell" in result["content"]

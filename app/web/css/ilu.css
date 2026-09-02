@@ -1,7 +1,7 @@
 /* ===================================================================
    I.L.U. — Diseño visual de la presencia
 
-   "El Corazón de I.L.U."
+   "La Presencia de I.L.U."
 
    Paleta: Índigo profundo (núcleo) + Violeta (presencia/energía) +
    Ámbar cálido (servir a la familia) + Verde (éxito/aprendizaje) +
@@ -40,6 +40,7 @@
   /* Layout */
   --ilu-topbar-h: 56px;
   --ilu-sidebar-w: 300px;
+  --ilu-presence-w: 280px;
   --ilu-radius: 12px;
   --ilu-radius-sm: 8px;
   --ilu-radius-lg: 20px;
@@ -199,235 +200,48 @@ html, body {
   position: relative;
 }
 
-/* === ZONA DEL CORAZÓN (estado + chat) ============================== */
+/* === VISTA DE CHAT (con presencia lateral) ========================= */
 
-.core-zone {
+.chat-view {
   flex: 1;
+  display: flex;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* === PRESENCIA DE I.L.U. (zona lateral con Canvas) ================ */
+
+.presence-zone {
+  width: var(--ilu-presence-w);
+  min-width: var(--ilu-presence-w);
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  overflow-y: auto;
-  padding: var(--ilu-gap-lg) var(--ilu-gap);
-}
-
-/* === CORAZÓN DE I.L.U. — presencia visual ========================= */
-
-.ilu-core-container {
+  justify-content: center;
+  padding: 32px 8px 16px;
+  border-right: 1px solid var(--ilu-border);
+  background: linear-gradient(
+    180deg,
+    rgba(10, 10, 26, 0) 0%,
+    rgba(10, 10, 26, 0.3) 50%,
+    rgba(10, 10, 26, 0) 100%
+  );
   position: relative;
-  width: 180px;
-  height: 180px;
-  flex-shrink: 0;
-  margin-bottom: var(--ilu-gap);
 }
 
-.ilu-core {
+.presence-canvas-wrap {
+  width: 100%;
+  flex: 1;
+  min-height: 200px;
+  position: relative;
+}
+
+.presence-canvas-wrap canvas {
   position: absolute;
   inset: 0;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-/* La esfera central luminosa */
-.ilu-core-orb {
   width: 100%;
   height: 100%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle at 35% 35%,
-    var(--ilu-glow) 0%,
-    var(--ilu-core) 40%,
-    var(--ilu-core-deep) 70%,
-    var(--ilu-core-deepest) 100%
-  );
-  box-shadow:
-    0 0 40px rgba(79, 70, 229, 0.4),
-    0 0 80px rgba(139, 92, 246, 0.2),
-    inset 0 -20px 40px rgba(30, 27, 75, 0.5);
-  animation: ilu-breathe 4s ease-in-out infinite;
-  transition: background 0.6s ease, box-shadow 0.6s ease;
-}
-
-/* Highlight interno (brillo superior) */
-.ilu-core-orb::before {
-  content: '';
-  position: absolute;
-  top: 15%;
-  left: 20%;
-  width: 35%;
-  height: 35%;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.25) 0%,
-    transparent 70%
-  );
-  animation: ilu-shimmer 6s ease-in-out infinite;
-}
-
-/* Halo exterior */
-.ilu-core-halo {
-  position: absolute;
-  inset: -30px;
-  border-radius: 50%;
-  border: 1px solid rgba(139, 92, 246, 0.15);
-  animation: ilu-halo-pulse 4s ease-in-out infinite;
-}
-
-.ilu-core-halo:nth-child(2) {
-  inset: -50px;
-  border-color: rgba(139, 92, 246, 0.08);
-  animation-delay: -1s;
-}
-
-/* Anillos orbitales (trabajo) */
-.ilu-orbit {
-  position: absolute;
-  inset: -15px;
-  border-radius: 50%;
-  border: 2px solid transparent;
-  border-top-color: var(--ilu-glow);
-  border-right-color: rgba(139, 92, 246, 0.3);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.ilu-orbit:nth-child(4) {
-  inset: -35px;
-  border-top-color: var(--ilu-core);
-  border-left-color: rgba(79, 70, 229, 0.3);
-  animation-direction: reverse;
-}
-
-.ilu-core-container[data-state="working"] .ilu-orbit {
-  opacity: 1;
-  animation: ilu-orbit-spin 2s linear infinite;
-}
-
-.ilu-core-container[data-state="working"] .ilu-orbit:nth-child(4) {
-  animation-duration: 3s;
-}
-
-/* Partículas (trabajo) */
-.ilu-particles {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-}
-
-.ilu-particle {
-  position: absolute;
-  width: 3px;
-  height: 3px;
-  border-radius: 50%;
-  background: var(--ilu-glow);
-  opacity: 0;
-}
-
-.ilu-core-container[data-state="working"] .ilu-particle {
-  animation: ilu-particle-float 2.5s ease-in-out infinite;
-}
-
-.ilu-particle:nth-child(1) { top: 10%; left: 50%; animation-delay: 0s; }
-.ilu-particle:nth-child(2) { top: 30%; left: 90%; animation-delay: 0.4s; }
-.ilu-particle:nth-child(3) { top: 70%; left: 95%; animation-delay: 0.8s; }
-.ilu-particle:nth-child(4) { top: 90%; left: 60%; animation-delay: 1.2s; }
-.ilu-particle:nth-child(5) { top: 80%; left: 10%; animation-delay: 1.6s; }
-.ilu-particle:nth-child(6) { top: 40%; left: 5%; animation-delay: 2.0s; }
-
-/* Anillos de aprendizaje */
-.ilu-learn-ring {
-  position: absolute;
-  inset: 0;
-  border-radius: 50%;
-  border: 1.5px solid var(--ilu-ok);
-  opacity: 0;
-  transition: opacity 0.4s ease;
-}
-
-.ilu-core-container[data-state="learning"] .ilu-learn-ring {
-  opacity: 1;
-  animation: ilu-learn-expand 2s ease-out infinite;
-}
-
-.ilu-learn-ring:nth-child(8) { animation-delay: 0.6s; }
-.ilu-learn-ring:nth-child(9) { animation-delay: 1.2s; }
-
-/* Estado de escuchando: onda receptiva */
-.ilu-core-container[data-state="listening"] .ilu-core-orb {
-  animation: ilu-breathe 2.5s ease-in-out infinite,
-             ilu-listen-glow 2s ease-in-out infinite;
-}
-
-/* Estado pensando: remolino */
-.ilu-core-container[data-state="thinking"] .ilu-core-orb {
-  animation: ilu-think-pulse 1.8s ease-in-out infinite;
-}
-
-/* Estado respondiendo: radiación */
-.ilu-core-container[data-state="responding"] .ilu-core-orb {
-  animation: ilu-respond-burst 0.8s ease-out;
-}
-
-/* Estado esperando autorización */
-.ilu-core-container[data-state="authorization"] .ilu-core-orb {
-  background: radial-gradient(
-    circle at 35% 35%,
-    var(--ilu-warm) 0%,
-    #b45309 40%,
-    #78350f 70%,
-    #1c1c44 100%
-  );
-  box-shadow:
-    0 0 40px rgba(245, 158, 11, 0.4),
-    0 0 80px rgba(245, 158, 11, 0.2);
-  animation: ilu-wait-pulse 2s ease-in-out infinite;
-}
-
-/* Estado error */
-.ilu-core-container[data-state="error"] .ilu-core-orb {
-  background: radial-gradient(
-    circle at 35% 35%,
-    var(--ilu-error) 0%,
-    #b91c1c 40%,
-    #7f1d1d 70%,
-    #1c1c44 100%
-  );
-  box-shadow:
-    0 0 40px rgba(239, 68, 68, 0.4),
-    0 0 80px rgba(239, 68, 68, 0.2);
-  animation: ilu-error-flicker 0.5s ease-in-out infinite;
-}
-
-/* Estado emergencia */
-.ilu-core-container[data-state="emergency"] .ilu-core-orb {
-  background: radial-gradient(
-    circle at 35% 35%,
-    var(--ilu-error) 0%,
-    #dc2626 40%,
-    #991b1b 70%,
-    #1c1c44 100%
-  );
-  box-shadow:
-    0 0 60px rgba(239, 68, 68, 0.6),
-    0 0 120px rgba(239, 68, 68, 0.3);
-  animation: ilu-emergency-pulse 0.8s ease-in-out infinite;
-}
-
-/* Inactivo: apagado */
-.ilu-core-container[data-state="idle"] .ilu-core-orb {
-  background: radial-gradient(
-    circle at 35% 35%,
-    rgba(139, 92, 246, 0.5) 0%,
-    var(--ilu-core-deep) 40%,
-    var(--ilu-core-deepest) 70%,
-    var(--ilu-bg) 100%
-  );
-  box-shadow:
-    0 0 20px rgba(79, 70, 229, 0.2);
-  animation: ilu-breathe 6s ease-in-out infinite;
 }
 
 /* Label de estado */
@@ -438,36 +252,38 @@ html, body {
   margin-top: var(--ilu-gap-sm);
   min-height: 18px;
   transition: color var(--ilu-transition);
+  flex-shrink: 0;
 }
 
-.ilu-core-container[data-state="authorization"] ~ .ilu-state-label {
+.ilu-state-label[data-state="authorization"] {
   color: var(--ilu-warm);
 }
 
-.ilu-core-container[data-state="error"] ~ .ilu-state-label {
+.ilu-state-label[data-state="error"] {
   color: var(--ilu-error);
 }
 
-/* === ÁREA DE CHAT ================================================ */
+/* === COLUMNA DEL CHAT ============================================= */
 
-.chat-area {
-  width: 100%;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 var(--ilu-gap) var(--ilu-gap);
+.chat-column {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .chat-messages {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: var(--ilu-gap-sm);
-  max-height: 400px;
   overflow-y: auto;
-  padding-bottom: var(--ilu-gap);
+  padding: var(--ilu-gap) var(--ilu-gap-lg);
 }
 
 .chat-msg {
-  max-width: 85%;
+  max-width: 75%;
   padding: 10px 14px;
   border-radius: var(--ilu-radius);
   line-height: 1.5;
@@ -501,10 +317,8 @@ html, body {
 .chat-input-row {
   display: flex;
   gap: var(--ilu-gap-sm);
-  width: 100%;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 var(--ilu-gap) var(--ilu-gap);
+  padding: 0 var(--ilu-gap-lg) var(--ilu-gap);
+  flex-shrink: 0;
 }
 
 .chat-input {
@@ -552,6 +366,95 @@ html, body {
 .chat-send:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+/* === VOZ ========================================================= */
+
+.chat-mic {
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text-secondary);
+  border: 1px solid var(--ilu-border);
+  border-radius: var(--ilu-radius);
+  width: 48px;
+  cursor: pointer;
+  font-size: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--ilu-transition-fast);
+  flex-shrink: 0;
+}
+
+.chat-mic:hover {
+  background: var(--ilu-bg-input);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-active);
+}
+
+.chat-mic:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.chat-mic.active {
+  color: var(--ilu-error);
+  border-color: rgba(239, 68, 68, 0.5);
+  background: var(--ilu-error-soft);
+  animation: ilu-mic-pulse 1.2s ease-in-out infinite;
+}
+
+.chat-mic.speaking {
+  color: var(--ilu-glow);
+  border-color: var(--ilu-border-active);
+  background: var(--ilu-glow-soft);
+}
+
+@keyframes ilu-mic-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+}
+
+.voice-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 var(--ilu-gap-lg) var(--ilu-gap-sm);
+  font-size: 12px;
+  min-height: 22px;
+  flex-shrink: 0;
+}
+
+.voice-status {
+  font-weight: 600;
+  color: var(--ilu-text-secondary);
+  white-space: nowrap;
+}
+
+.voice-transcript {
+  color: var(--ilu-text-dim);
+  font-style: italic;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* === ZONA GENÉRICA (Tasks/Permisos/About sin presencia) =========== */
+
+.core-zone {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  overflow-y: auto;
+  padding: var(--ilu-gap-lg) var(--ilu-gap);
+}
+
+.chat-area {
+  width: 100%;
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--ilu-gap) var(--ilu-gap);
 }
 
 /* === SIDEBAR (contexto) ============================================ */
@@ -629,7 +532,6 @@ html, body {
   flex-shrink: 0;
 }
 
-/* Estado vacío */
 .sidebar-empty {
   font-size: 12px;
   color: var(--ilu-text-dim);
@@ -854,6 +756,18 @@ html, body {
 
 /* === RESPONSIVE =================================================== */
 
+@media (max-width: 900px) {
+  .presence-zone {
+    width: 200px;
+    min-width: 200px;
+    padding: 16px 4px 12px;
+  }
+
+  .presence-canvas-wrap {
+    min-height: 160px;
+  }
+}
+
 @media (max-width: 768px) {
   .sidebar {
     position: fixed;
@@ -864,9 +778,37 @@ html, body {
     box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
   }
 
-  .ilu-core-container {
-    width: 140px;
-    height: 140px;
+  /* En móvil: presencia arriba, chat abajo */
+  .chat-view {
+    flex-direction: column;
+  }
+
+  .presence-zone {
+    width: 100%;
+    min-width: 100%;
+    height: 180px;
+    min-height: 180px;
+    flex-shrink: 0;
+    border-right: none;
+    border-bottom: 1px solid var(--ilu-border);
+    flex-direction: row;
+    padding: 8px 16px;
+    gap: 12px;
+  }
+
+  .presence-canvas-wrap {
+    width: 180px;
+    min-width: 180px;
+    min-height: unset;
+    height: 100%;
+    flex: none;
+  }
+
+  .ilu-state-label {
+    writing-mode: vertical-rl;
+    text-orientation: mixed;
+    margin-top: 0;
+    margin-left: 4px;
   }
 
   .chat-msg {

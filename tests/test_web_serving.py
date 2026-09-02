@@ -129,7 +129,7 @@ class TestStaticCSS:
         status, headers, body = _get("/css/states.css")
         assert status == 200
         assert "text/css" in headers.get("Content-Type", "")
-        assert b"ilu-breathe" in body
+        assert b"ilu-msg-in" in body
 
 
 # ------------------------------------------------------------------
@@ -159,6 +159,15 @@ class TestStaticJS:
         status, headers, body = _get("/js/app.js")
         assert status == 200
         assert b"ILUApi" in body
+
+    def test_voice_js_served(self, web_server):
+        status, headers, body = _get("/js/voice.js")
+        assert status == 200
+        ct = headers.get("Content-Type", "")
+        assert "javascript" in ct or "text/" in ct
+        assert b"ILUVoice" in body
+        assert b"SpeechRecognizer" in body
+        assert b"SpeechSynthesizer" in body
 
 
 # ------------------------------------------------------------------

@@ -1,8 +1,8 @@
 /**
- * I.L.U. — Componente visual del Corazón
+ * I.L.U. — Componente visual de la Presencia
  *
- * Gestiona el estado visual de la presencia de I.L.U.
- * Cada estado es un token (data-state) que el CSS anima.
+ * Gestiona el estado visual de I.L.U. delegando al motor de plasma
+ * (ILUPlasma) que renderiza en Canvas.
  *
  * Estados:
  *   idle, listening, thinking, working, responding,
@@ -40,25 +40,38 @@ window.ILUCore = (function () {
   };
 
   let _current = STATES.IDLE;
-  let _coreEl = null;
   let _labelEl = null;
+  let _initialized = false;
 
   function _init() {
-    _coreEl = document.getElementById('iluCore');
+    if (_initialized) return;
     _labelEl = document.getElementById('stateLabel');
+
+    // Inicializar motor de plasma
+    if (window.ILUPlasma && window.ILUPlasma.init()) {
+      window.ILUPlasma.start();
+    }
+
+    _initialized = true;
   }
 
   function set(state) {
-    if (!_coreEl) _init();
-    if (!_coreEl) return;
+    if (!_initialized) _init();
 
-    if (!STATES[state.toUpperCase()]) return;
+    var validState = STATES[state.toUpperCase()];
+    if (!validState) return;
 
-    _current = state;
-    _coreEl.setAttribute('data-state', state);
+    _current = validState;
 
+    // Delegar al motor de plasma
+    if (window.ILUPlasma) {
+      window.ILUPlasma.setState(validState);
+    }
+
+    // Actualizar label
     if (_labelEl) {
-      _labelEl.textContent = STATE_LABELS[state] || '';
+      _labelEl.textContent = STATE_LABELS[validState] || '';
+      _labelEl.setAttribute('data-state', validState);
     }
   }
 

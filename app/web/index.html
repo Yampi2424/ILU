@@ -47,53 +47,42 @@
     <main class="main-panel">
 
       <!-- === VISTA: CONVERSACIÓN === -->
-      <div id="viewChat" class="core-zone">
+      <div id="viewChat" class="chat-view">
 
-        <!-- Corazón de I.L.U. -->
-        <div class="ilu-core-container" id="iluCore" data-state="idle">
-          <div class="ilu-core">
-            <div class="ilu-core-orb"></div>
+        <!-- Presencia de I.L.U. (Canvas de Plasma) -->
+        <aside class="presence-zone">
+          <div class="presence-canvas-wrap">
+            <canvas id="iluPlasma"></canvas>
           </div>
-          <div class="ilu-core-halo"></div>
-          <div class="ilu-core-halo"></div>
-          <div class="ilu-orbit"></div>
-          <div class="ilu-orbit"></div>
-          <div class="ilu-particles">
-            <div class="ilu-particle"></div>
-            <div class="ilu-particle"></div>
-            <div class="ilu-particle"></div>
-            <div class="ilu-particle"></div>
-            <div class="ilu-particle"></div>
-            <div class="ilu-particle"></div>
+          <div class="ilu-state-label" id="stateLabel">
+            I.L.U. está lista
           </div>
-          <div class="ilu-learn-ring"></div>
-          <div class="ilu-learn-ring"></div>
-          <div class="ilu-learn-ring"></div>
-        </div>
+        </aside>
 
-        <div class="ilu-state-label" id="stateLabel">
-          I.L.U. está lista
-        </div>
-
-        <!-- Mensajes -->
-        <div class="chat-area">
+        <!-- Chat -->
+        <div class="chat-column">
           <div class="chat-messages" id="chatMessages">
             <div class="chat-msg assistant">
               <div>Hola. Soy I.L.U., tu inteligencia local unificada. ¿En qué puedo ayudarte?</div>
               <div class="msg-meta">IDENTITY</div>
             </div>
           </div>
-        </div>
 
-        <!-- Input -->
-        <div class="chat-input-row">
-          <textarea
-            class="chat-input"
-            id="chatInput"
-            placeholder="Escribe un mensaje a I.L.U…"
-            rows="1"
-          ></textarea>
-          <button class="chat-send" id="chatSend">Enviar</button>
+          <div class="voice-bar" id="voiceBar" hidden>
+            <span class="voice-status" id="voiceStatus"></span>
+            <span class="voice-transcript" id="voiceTranscript"></span>
+          </div>
+
+          <div class="chat-input-row">
+            <textarea
+              class="chat-input"
+              id="chatInput"
+              placeholder="Escribe un mensaje a I.L.U.…"
+              rows="1"
+            ></textarea>
+            <button class="chat-send" id="chatSend">Enviar</button>
+            <button class="chat-mic" id="micButton" title="Hablar con I.L.U." aria-label="Activar voz">🎙</button>
+          </div>
         </div>
       </div>
 
@@ -213,7 +202,9 @@
   </div>
 
   <script src="/js/api.js"></script>
+  <script src="/js/ilu-plasma.js"></script>
   <script src="/js/ilu-core.js"></script>
+  <script src="/js/voice.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/app.js"></script>
 

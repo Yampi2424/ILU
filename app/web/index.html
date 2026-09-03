@@ -73,6 +73,18 @@
             <span class="voice-transcript" id="voiceTranscript"></span>
           </div>
 
+          <!-- Visualización dual de audio (tiempo real) -->
+          <div class="voice-vis" id="voiceVis" hidden>
+            <div class="vis-track">
+              <span class="vis-label">Tú</span>
+              <canvas class="vis-wave" id="micWave" width="640" height="48"></canvas>
+            </div>
+            <div class="vis-track">
+              <span class="vis-label">I.L.U.</span>
+              <canvas class="vis-wave" id="speakWave" width="640" height="48"></canvas>
+            </div>
+          </div>
+
           <div class="chat-input-row">
             <textarea
               class="chat-input"
@@ -205,6 +217,7 @@
   <script src="/js/ilu-plasma.js"></script>
   <script src="/js/ilu-core.js"></script>
   <script src="/js/voice.js"></script>
+  <script src="/js/realtime.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/app.js"></script>
 

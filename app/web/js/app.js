@@ -17,6 +17,7 @@
 
   let _sessionId = 'web-' + Date.now();
   let _sending = false;
+  let _voiceEngine = null;   // 'realtime' | 'legacy' | null
 
   // --- Inicialización -----------------------------------------------
 
@@ -28,22 +29,75 @@
     _pollAuthorizationRequests();
   }
 
+  /**
+   * Prefiere el motor de voz EN TIEMPO REAL (realtime.js): micrófono
+   * real + VAD + visualización dual + TTS del backend + barge-in. Si el
+   * navegador no lo soporta (sin getUserMedia/AudioContext/Web Speech),
+   * cae al motor legado (voice.js, Web Speech puro).
+   */
   function _initVoice() {
-    if (!window.ILUVoice) return;
+    if (window.ILURealtime && ILURealtime.init()) {
+      ILURealtime.setCallbacks({
+        onUtterance: _sendVoiceText,
+        onInterim: _showVoiceTranscript,
+        onListening: _onRealtimeListening,
+        onCapturing: _onCapturing,
+        onSpeaking: _onSpeaking,
+        onBargeIn: _onBargeIn,
+        onVisual: _onVisual,
+        onStatus: _setVoiceStatus,
+        onModeChange: _onVoiceModeChange,
+        onError: _onVoiceError,
+        onUnavailable: _onVoiceUnavailable
+      });
+      _voiceEngine = 'realtime';
+      return;
+    }
 
-    ILUVoice.init();
-    ILUVoice.configure({ onTranscript: _sendVoiceText });
-    ILUVoice.setCallbacks({
-      onTranscribed: _showVoiceTranscript,
-      onListening: _onVoiceListening,
-      onError: _onVoiceError,
-      onUnavailable: _onVoiceUnavailable,
-      onModeChange: _onVoiceModeChange
-    });
+    // Fallback: motor legado (Web Speech para STT y TTS).
+    if (window.ILUVoice) {
+      ILUVoice.init();
+      ILUVoice.configure({ onTranscript: _sendVoiceText });
+      ILUVoice.setCallbacks({
+        onTranscribed: _showVoiceTranscript,
+        onListening: _onVoiceListening,
+        onError: _onVoiceError,
+        onUnavailable: _onVoiceUnavailable,
+        onModeChange: _onVoiceModeChange
+      });
 
-    // Si el navegador no soporta voz, desactivar el botón.
-    if (!ILUVoice.isAvailable()) {
-      _onVoiceUnavailable();
+      _voiceEngine = 'legacy';
+
+      if (!ILUVoice.isAvailable()) {
+        _onVoiceUnavailable();
+      }
+    }
+  }
+
+  function _voiceActive() {
+    if (_voiceEngine === 'realtime') return ILURealtime.isActive();
+    if (_voiceEngine === 'legacy') return ILUVoice && ILUVoice.isActive();
+    return false;
+  }
+
+  function _engineSpeak(text) {
+    if (_voiceEngine === 'realtime') ILURealtime.speakResponse(text);
+    else if (_voiceEngine === 'legacy') ILUVoice.speakResponse(text);
+  }
+
+  function _toggleVoice() {
+    if (_voiceEngine === 'realtime') {
+      if (ILURealtime.isActive()) {
+        ILURealtime.stop();
+        _setMicUI('idle');
+        _hideVoiceVis();
+      } else {
+        ILURealtime.start();
+      }
+      return;
+    }
+    if (_voiceEngine === 'legacy' && window.ILUVoice) {
+      window.ILUVoice.toggle();
     }
   }
 
@@ -81,9 +135,7 @@
     // Micrófono (voz)
     var micBtn = document.getElementById('micButton');
     if (micBtn) {
-      micBtn.addEventListener('click', function () {
-        if (window.ILUVoice) window.ILUVoice.toggle();
-      });
+      micBtn.addEventListener('click', _toggleVoice);
     }
 
     // Panel modal
@@ -159,7 +211,7 @@
     if (!text) return;
     if (_sending) {
       // Ya hay una petición en curso: no encolar por voz.
-      if (window.ILUVoice) window.ILUVoice.cancelTurn();
+      if (_voiceEngine === 'legacy' && window.ILUVoice) window.ILUVoice.cancelTurn();
       return;
     }
     _dispatchMessage(text);
@@ -174,7 +226,7 @@
   async function _dispatchMessage(message) {
     if (!message || _sending) return;
 
-    var isVoice = window.ILUVoice && window.ILUVoice.isActive();
+    var isVoice = _voiceActive();
 
     _sending = true;
 
@@ -187,12 +239,14 @@
     // Mostrar el mensaje del usuario
     ILUUI.appendMessage('user', message);
 
-    // Estado: escuchando → pensando (solo texto; en voz lo gestiona ILUVoice)
+    // Estado: escuchando → pensando
     if (!isVoice) {
       ILUCore.showListening();
       setTimeout(function () {
         ILUCore.showThinking();
       }, 400);
+    } else {
+      ILUCore.showThinking();
     }
 
     ILUUI.showTypingIndicator();
@@ -259,7 +313,7 @@
    * respuesta; nunca concede permisos ni altera el flujo.
    */
   function _applyVisualAndSpeak(result, responseText, isVoice) {
-    if (!isVoice || !window.ILUVoice) {
+    if (!isVoice || !_voiceEngine) {
       ILUCore.applyFromResponse(result);
       return;
     }
@@ -267,17 +321,21 @@
     if (result.error && !result.response) {
       ILUCore.set(ILUCore.STATES.ERROR);
       setTimeout(function () { ILUCore.showIdle(); }, 4000);
-      window.ILUVoice.speakError();
+      if (_voiceEngine === 'legacy') window.ILUVoice.speakError();
+      else if (window.ILURealtime) window.ILURealtime.finishTurn();
     } else if (result.authorization === 'ask') {
       ILUCore.set(ILUCore.STATES.AUTHORIZATION);
-      window.ILUVoice.speakAuthorization();
+      if (_voiceEngine === 'legacy') window.ILUVoice.speakAuthorization();
+      else if (window.ILURealtime) window.ILURealtime.finishTurn();
     } else if (result.tool) {
       ILUCore.set(ILUCore.STATES.WORKING);
       setTimeout(function () {
-        window.ILUVoice.speakResponse(responseText);
+        ILUCore.set(ILUCore.STATES.RESPONDING);
+        _engineSpeak(responseText);
       }, 250);
     } else {
-      window.ILUVoice.speakResponse(responseText);
+      ILUCore.set(ILUCore.STATES.RESPONDING);
+      _engineSpeak(responseText);
     }
   }
 
@@ -295,8 +353,10 @@
   }
 
   function _onVoiceModeChange(on) {
-    _setMicUI(on ? 'active' : 'idle');
+    _setMicUI(on ? 'listening' : 'idle');
     _setVoiceStatus(on ? 'Voz activa — habla para conversar' : '');
+    if (on) _showVoiceVis();
+    else _hideVoiceVis();
   }
 
   function _onVoiceError(err) {
@@ -305,11 +365,78 @@
     setTimeout(function () { ILUCore.showIdle(); }, 2500);
   }
 
-  function _onVoiceUnavailable() {
-    _setVoiceStatus('La voz no está disponible en este navegador');
-    var micBtn = document.getElementById('micButton');
-    if (micBtn) micBtn.disabled = true;
+  function _onVoiceUnavailable(reason) {
+    if (reason === 'mic_permission') {
+      _setVoiceStatus('Concede acceso al micrófono para hablar');
+    } else {
+      _setVoiceStatus('La voz no está disponible en este navegador');
+      // Solo se desactiva el botón cuando la voz es genuinamente
+      // insoportada (motor legado); un permiso denegado es reversible.
+      if (_voiceEngine !== 'realtime') {
+        var micBtn = document.getElementById('micButton');
+        if (micBtn) micBtn.disabled = true;
+      }
+    }
     _refreshVoiceBar();
+  }
+
+  // --- Callbacks del motor REAL-TIME (realtime.js) ------------------
+
+  function _onRealtimeListening(on) {
+    _setMicUI(on ? 'listening' : 'idle');
+  }
+
+  /** El usuario está hablando (VAD): resalta el micrófono y plasma. */
+  function _onCapturing(on) {
+    _setMicUI(on ? 'active' : 'listening');
+    if (on) {
+      _setVoiceStatus('Hablando…');
+      ILUCore.showListening();
+    }
+  }
+
+  /** I.L.U. está reproduciendo su respuesta: visual de voz activa. */
+  function _onSpeaking(on) {
+    _setMicUI(on ? 'speaking' : 'listening');
+    if (on) {
+      _setVoiceStatus('I.L.U. responde…');
+      ILUCore.set(ILUCore.STATES.RESPONDING);
+    } else {
+      // Terminó de hablar: volver a escuchar.
+      _setVoiceStatus('');
+      ILUCore.showListening();
+    }
+  }
+
+  /** Barge-in: el usuario interrumpió la respuesta de I.L.U. */
+  function _onBargeIn() {
+    _setVoiceStatus('Interrumpido — te escucho');
+    ILUCore.showListening();
+  }
+
+  /**
+   * Niveles de audio reales (mic / voz de I.L.U.) en cada frame.
+   * Actualmente el plasma ya reacciona vía ILUPlasma.setEnergy (lo
+   * alimenta realtime.js); aquí podemos reflejar estado adicional si
+   * se desea, o simplemente descartar (el dato ya se visualizó en los
+   * canvases por el propio motor).
+   */
+  function _onVisual(levels) {
+    // No-op: la onda se dibuja en los canvases por el motor; el plasma
+    // recibe la energía directamente desde realtime.js.
+    void levels;
+  }
+
+  // --- Visualización dual ------------------------------------------
+
+  function _showVoiceVis() {
+    var vis = document.getElementById('voiceVis');
+    if (vis) vis.hidden = false;
+  }
+
+  function _hideVoiceVis() {
+    var vis = document.getElementById('voiceVis');
+    if (vis) vis.hidden = true;
   }
 
   function _setMicUI(state) {

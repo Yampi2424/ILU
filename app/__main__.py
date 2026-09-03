@@ -11,10 +11,14 @@ from .core import ILUCore
 from config.settings import ILUSettings
 from config.identity import ILU_IDENTITY
 from security.authorization_request import AuthorizationRequired
+from .tts import TTSService, TTSUnavailable
 
 
 core = ILUCore()
 settings = ILUSettings()
+
+# Servicio de síntesis de voz de I.L.U. (voz de la respuesta).
+tts = TTSService()
 
 # Directorio de archivos estáticos de la interfaz web (I.L.U. Presencia).
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
@@ -363,6 +367,13 @@ class ILUHandler(BaseHTTPRequestHandler):
             self.send_json(200, {
                 "status": "ok"
             })
+
+        elif self._path() == "/tts":
+            # Voz de I.L.U.: sintetiza el texto de la respuesta a audio.
+            # Si el motor no está disponible (sin red / sin paquete),
+            # devuelve 503 y el frontend cae al TTS del navegador.
+            self._handle_tts()
+            return
 
         elif self._path() == "/about":
             self.send_json(200, {
@@ -720,6 +731,42 @@ class ILUHandler(BaseHTTPRequestHandler):
             self.send_json(500, {
                 "success": False,
                 "error": "internal_error",
+                "detail": str(error)
+            })
+
+    def _handle_tts(self):
+        """Sintetiza el texto de la respuesta de I.L.U. a audio (MP3)."""
+        text = _query_params(self.path).get("text", "").strip()
+
+        if not text:
+            self.send_json(400, {
+                "success": False,
+                "error": "text_required"
+            })
+            return
+
+        try:
+            audio = tts.synthesize(text)
+
+            self.send_response(200)
+            self.send_header("Content-Type", "audio/mpeg")
+            self.send_header("Content-Length", str(len(audio)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(audio)
+
+        except TTSUnavailable as error:
+            # 503: el frontend interpreta esto y cae al TTS nativo.
+            self.send_json(503, {
+                "success": False,
+                "error": "tts_unavailable",
+                "detail": str(error)
+            })
+
+        except Exception as error:  # noqa: BLE001 - respuesta de error controlada
+            self.send_json(500, {
+                "success": False,
+                "error": "tts_error",
                 "detail": str(error)
             })
 

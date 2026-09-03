@@ -438,6 +438,41 @@ html, body {
   white-space: nowrap;
 }
 
+/* === VISUALIZACIÓN DUAL DE AUDIO (tiempo real) ==================== */
+
+.voice-vis {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 var(--ilu-gap-lg) var(--ilu-gap-sm);
+  flex-shrink: 0;
+}
+
+.vis-track {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.vis-label {
+  width: 44px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--ilu-text-dim);
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.vis-wave {
+  flex: 1;
+  height: 48px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--ilu-border);
+  display: block;
+}
+
 /* === ZONA GENÉRICA (Tasks/Permisos/About sin presencia) =========== */
 
 .core-zone {

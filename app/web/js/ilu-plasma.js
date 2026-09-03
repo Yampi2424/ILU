@@ -570,6 +570,10 @@ window.ILUPlasma = (function () {
   var _density = 0.7;
   var _tintR = 80, _tintG = 70, _tintB = 230;
 
+  // Energía viva de voz [0..1]: hace latir el plasma con la voz
+  // (del usuario mientras escucha, de I.L.U. mientras responde).
+  var _energy = 0, _tEnergy = 0;
+
   // Objetivos de interpolación
   var _tSpeed = 0.4, _tAmplitude = 0.28, _tDensity = 0.7;
   var _tR = 80, _tG = 70, _tB = 230;
@@ -773,6 +777,7 @@ window.ILUPlasma = (function () {
     _speed = lerp(_speed, _tSpeed, lerpF);
     _amplitude = lerp(_amplitude, _tAmplitude, lerpF);
     _density = lerp(_density, _tDensity, lerpF);
+    _energy = lerp(_energy, _tEnergy, 1 - Math.exp(-8 * dt));
     _tintR = lerp(_tintR, _tR, lerpF);
     _tintG = lerp(_tintG, _tG, lerpF);
     _tintB = lerp(_tintB, _tB, lerpF);
@@ -869,12 +874,15 @@ window.ILUPlasma = (function () {
     var glowColor = { r: Math.min(255, color.r + 55), g: Math.min(255, color.g + 40), b: Math.min(255, color.b + 20) };
 
     // Silhouette blending
-    var effectiveAmplitude = _amplitude * (1 - _silhouette * 0.55);
-    var effectiveDensity = _density * (1 + _silhouette * 0.15);
+    var effectiveAmplitude = _amplitude * (1 - _silhouette * 0.55) * energyBoost;
+    var effectiveDensity = _density * (1 + _silhouette * 0.15) + _energy * 0.25;
 
     // --- HALO DIFUSO ---
-    var breathe = Math.sin(_time * 0.5 * _speed) * 0.12;
-    var haloR = _plasmaRadius * (1.25 + breathe);
+    // La energía viva de la voz hace latir el halo y la amplitud:
+    // el plasma respira con quien habla.
+    var energyBoost = 1 + _energy * 0.9;
+    var breathe = Math.sin(_time * 0.5 * _speed) * (0.12 + _energy * 0.3);
+    var haloR = _plasmaRadius * (1.25 + breathe + _energy * 0.12);
     var haloGrd = _ctx.createRadialGradient(cx, cy, _plasmaRadius * 0.3, cx, cy, haloR);
     haloGrd.addColorStop(0, rgbStr(color, 0.06));
     haloGrd.addColorStop(0.5, rgbStr(glowColor, 0.025));
@@ -963,6 +971,15 @@ window.ILUPlasma = (function () {
     _silTimer = 0;
   }
 
+  /**
+   * Energía viva de voz [0..1]: hace latir el plasma con quien habla.
+   * El llamador la alimenta cada frame (0 cuando hay silencio) y el
+   * motor la suaviza/decae por sí solo.
+   */
+  function setEnergy(level) {
+    _tEnergy = clamp(level || 0, 0, 1);
+  }
+
   return {
     init: init,
     start: start,
@@ -971,6 +988,7 @@ window.ILUPlasma = (function () {
     getState: getState,
     getFPS: getFPS,
     forceSilhouette: forceSilhouette,
+    setEnergy: setEnergy,
     resize: _resize
   };
 })();

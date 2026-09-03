@@ -44,7 +44,8 @@ class SubAgent:
         max_rounds=3,
         grant_store=None,
         policy=None,
-        emergency=None
+        emergency=None,
+        spoofing=None
     ):
         self.provider = provider
         self.tools = tools
@@ -59,6 +60,9 @@ class SubAgent:
         self.grant_store = grant_store
         self.policy = policy
         self.emergency = emergency
+        # D-7: el sub-agente comparte el SpoofingGuard del padre para que
+        # la vigilancia de suplantación cubra también sus tool-calls.
+        self.spoofing = spoofing
 
     # ------------------------------------------------------------------
     # Contexto acotado (memoria separada)
@@ -155,6 +159,8 @@ class SubAgent:
             grant_store=self.grant_store,
             policy=self.policy,
             emergency=self.emergency,
+            spoofing=self.spoofing,
+            verification_ok=True,
         )
 
         self.audit.record(
@@ -248,7 +254,7 @@ class SubAgent:
             model_result = self.provider.generate(
                 current,
                 sub_context,
-                self.tools.list_tools()
+                self.tools.list_tools_full()
             )
 
             if not isinstance(model_result, dict):

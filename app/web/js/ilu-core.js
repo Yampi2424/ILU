@@ -42,6 +42,23 @@ window.ILUCore = (function () {
   let _current = STATES.IDLE;
   let _labelEl = null;
   let _initialized = false;
+  let _timers = [];
+
+  // Gestión de transiciones temporales: cada nuevo estado programado se
+  // cancela si llega otra respuesta. Evita que un setTimeout viejo
+  // "encienda" un estado obsoleto sobre uno más reciente.
+  function _clearTimers() {
+    _timers.forEach(function (t) { clearTimeout(t); });
+    _timers = [];
+  }
+
+  function _schedule(fn, ms) {
+    var id = setTimeout(function () {
+      _timers = _timers.filter(function (t) { return t !== id; });
+      fn();
+    }, ms);
+    _timers.push(id);
+  }
 
   function _init() {
     if (_initialized) return;
@@ -93,6 +110,10 @@ window.ILUCore = (function () {
    *   success=true (texto)               → responding (efímero)
    */
   function applyFromResponse(result) {
+    // Nueva respuesta: se cancelan las transiciones pendientes de la
+    // anterior para que un estado obsoleto no pise al actual.
+    _clearTimers();
+
     if (!result) {
       set(STATES.IDLE);
       return;
@@ -105,19 +126,19 @@ window.ILUCore = (function () {
 
     if (!result.success) {
       set(STATES.ERROR);
-      setTimeout(function () { set(STATES.IDLE); }, 4000);
+      _schedule(function () { set(STATES.IDLE); }, 4000);
       return;
     }
 
     if (result.tool) {
       set(STATES.WORKING);
-      setTimeout(function () { set(STATES.RESPONDING); }, 300);
-      setTimeout(function () { set(STATES.IDLE); }, 2500);
+      _schedule(function () { set(STATES.RESPONDING); }, 300);
+      _schedule(function () { set(STATES.IDLE); }, 2500);
       return;
     }
 
     set(STATES.RESPONDING);
-    setTimeout(function () { set(STATES.IDLE); }, 2500);
+    _schedule(function () { set(STATES.IDLE); }, 2500);
   }
 
   /**

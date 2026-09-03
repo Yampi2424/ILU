@@ -231,3 +231,15 @@ def test_omniroute_native_tool_call_denied(monkeypatch):
 
     assert result["type"] == "text"
     assert "shell" in result["content"]
+
+
+# ------------------------------------------------------------------
+# F-2 — timeout configurable (ILU_OMNIROUTE_TIMEOUT)
+# ------------------------------------------------------------------
+
+def test_omniroute_timeout_configurable(monkeypatch):
+    monkeypatch.setenv("ILU_OMNIROUTE_TIMEOUT", "45")
+
+    provider = OmniRouteProvider()
+
+    assert provider.timeout == 45

@@ -104,27 +104,47 @@ class GrantStore:
     # Consulta (usado por SecurityGate en cada decide())
     # ------------------------------------------------------------------
 
-    def find_active(self, capability, actor=None, context=None):
+    def _find_active(self, capability, actor=None, context=None, consume=False):
         """
-        Devuelve el primer grant activo que cubre la capacidad en el
-        contexto dado. La expiración y la revocación se aplican aquí, en
-        el momento de la decisión: un permiso vencido/revocado se invalida
-        de inmediato para la siguiente ejecución protegida.
+        Localiza el primer grant activo que cubre la capacidad en el
+        contexto dado.
+
+        La expiración y la revocación se aplican aquí, en el momento de la
+        decisión: un permiso vencido/revocado se invalida de inmediato
+        para la siguiente ejecución protegida.
+
+        consume=False (usado por has_valid_for) SOLO comprueba: no consume
+        grants de uso único. Así, preguntar "¿hay permiso?" jamás quema un
+        permiso de un solo uso.
         """
         for grant in self.grants.values():
             if not grant.matches(capability, actor=actor, context=context):
                 continue
 
-            # Consumo por uso único (scope single_action / max_uses).
+            # Consumo por uso único (scope single_action / max_uses)
+            # SOLO cuando la llamada es de consumo real (find_active).
             if grant.max_uses is not None:
-                grant.mark_used()
-                if grant.status == "used":
-                    self._save()
+                if consume:
+                    grant.mark_used()
+                    if grant.status == "used":
+                        self._save()
                 return grant
 
             return grant
 
         return None
+
+    def find_active(self, capability, actor=None, context=None):
+        """
+        Devuelve el primer grant activo que cubre la capacidad, consumiendo
+        los grants de uso único (single_action / max_uses).
+        """
+        return self._find_active(
+            capability,
+            actor=actor,
+            context=context,
+            consume=True,
+        )
 
     def sweep_expired(self):
         """Marca los grants activos expirados; devuelve cuántos marcó."""
@@ -163,4 +183,17 @@ class GrantStore:
         return items[:limit]
 
     def has_valid_for(self, capability, actor=None, context=None):
-        return self.find_active(capability, actor=actor, context=context) is not None
+        """
+        ¿Existe un grant activo que cubra la capacidad? NO consume grants
+        de uso único: es una comprobación pura (a diferencia de
+        find_active, que consume single_action / max_uses).
+        """
+        return (
+            self._find_active(
+                capability,
+                actor=actor,
+                context=context,
+                consume=False,
+            )
+            is not None
+        )

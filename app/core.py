@@ -464,7 +464,8 @@ class ILUCore:
             memory=self.memory,
             grant_store=self.grant_store,
             policy=self.policy,
-            emergency=self.emergency
+            emergency=self.emergency,
+            spoofing=self.spoofing
         )
 
         result = sub.run(task)
@@ -1295,6 +1296,23 @@ class ILUCore:
         payload.update(extra)
         return payload
 
+    def _verification_ok(self, actor):
+        """
+        D-7 — ¿La identidad que actúa está verificada?
+
+        Una identidad se considera verificada si es I.L.U. misma ("ilu")
+        o un principal raíz registrado (el owner). Cualquier otra identidad
+        que intente una operación sensible queda como NO verificada y,
+        ante fallos repetidos, la marca SpoofingGuard como sospechosa.
+        """
+        if actor == "ilu":
+            return True
+
+        try:
+            return self.principals.is_root(actor)
+        except Exception:
+            return False
+
     def _execute_tool_call(self, tool_call, mode="direct"):
         """
         Ejecuta una ToolCall a través de la compuerta de autorización.
@@ -1351,6 +1369,9 @@ class ILUCore:
             tool_call.tool
         )
 
+        # D-7: se conecta el SpoofingGuard y la verificación de identidad.
+        # I.L.U. actúa como "ilu" (verificada); una identidad desconocida
+        # en una capacidad sensible queda bajo vigilancia de suplantación.
         decision = self.security.decide(
             tool_call.tool,
             permission,
@@ -1361,6 +1382,8 @@ class ILUCore:
             grant_store=self.grant_store,
             policy=self.policy,
             emergency=self.emergency,
+            spoofing=self.spoofing,
+            verification_ok=self._verification_ok("ilu"),
         )
 
         self.audit.record(

@@ -12,6 +12,7 @@ permisos; todo sigue pasando por la compuerta de seguridad (Bloque 8).
 
 import json
 import os
+import threading
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -43,6 +44,13 @@ class ConversationStore:
             or os.environ.get("DATABASE_URL")
         )
 
+        # D-6: lock para concurrencia del backend local (JSONL). append()
+        # lee todos los turnos, añade uno y reescribe el archivo completo;
+        # dos peticiones HTTP simultáneas (ThreadingHTTPServer) perderían
+        # un turno sin este lock. RLock: append/reset llaman a
+        # _load_local/_write_local sin interbloquearse.
+        self._lock = threading.RLock()
+
         if self.database_url:
             self._init_database()
 
@@ -68,40 +76,42 @@ class ConversationStore:
     # ------------------------------------------------------------------
 
     def _load_local(self):
-        if not self.path.exists():
-            return []
+        with self._lock:
+            if not self.path.exists():
+                return []
 
-        turns = []
+            turns = []
 
-        with self.path.open(
-            "r",
-            encoding="utf-8"
-        ) as file:
-            for line in file:
-                line = line.strip()
+            with self.path.open(
+                "r",
+                encoding="utf-8"
+            ) as file:
+                for line in file:
+                    line = line.strip()
 
-                if not line:
-                    continue
+                    if not line:
+                        continue
 
-                try:
-                    turns.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
+                    try:
+                        turns.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        continue
 
-        return turns
+            return turns
 
     def _write_local(self, turns):
-        with self.path.open(
-            "w",
-            encoding="utf-8"
-        ) as file:
-            for turn in turns:
-                file.write(
-                    json.dumps(
-                        turn,
-                        ensure_ascii=False
-                    ) + "\n"
-                )
+        with self._lock:
+            with self.path.open(
+                "w",
+                encoding="utf-8"
+            ) as file:
+                for turn in turns:
+                    file.write(
+                        json.dumps(
+                            turn,
+                            ensure_ascii=False
+                        ) + "\n"
+                    )
 
     # ------------------------------------------------------------------
     # API
@@ -152,9 +162,10 @@ class ConversationStore:
                     )
             return
 
-        turns = self._load_local()
-        turns.append(turn)
-        self._write_local(turns)
+        with self._lock:
+            turns = self._load_local()
+            turns.append(turn)
+            self._write_local(turns)
 
     def recent(self, session_id, limit=6):
         if self.database_url:
@@ -216,15 +227,16 @@ class ConversationStore:
                     )
             return
 
-        turns = self._load_local()
+        with self._lock:
+            turns = self._load_local()
 
-        self._write_local(
-            [
-                turn
-                for turn in turns
-                if turn.get("session_id") != session_id
-            ]
-        )
+            self._write_local(
+                [
+                    turn
+                    for turn in turns
+                    if turn.get("session_id") != session_id
+                ]
+            )
 
     def list_sessions(self):
         if self.database_url:

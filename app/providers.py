@@ -183,6 +183,16 @@ class LocalProvider(AIProvider):
             )
         )
 
+        # F-1: máximo de tokens de respuesta configurables. El valor por
+        # defecto anterior (128) truncaba las respuestas de I.L.U.; se
+        # sube a un valor razonable y se permite ajustar con el entorno.
+        self.max_tokens = int(
+            os.environ.get(
+                "ILU_LOCAL_MAX_TOKENS",
+                "1024"
+            )
+        )
+
     def generate(self, message, context=None, tools=None):
         available_tools = self._available_tools(
             tools
@@ -197,7 +207,7 @@ class LocalProvider(AIProvider):
             "stream": False,
             "think": False,
             "options": {
-                "num_predict": 128
+                "num_predict": self.max_tokens
             },
             "keep_alive": "5m"
         }
@@ -304,7 +314,13 @@ class OmniRouteProvider(AIProvider):
             or ""
         )
 
-        self.timeout = 600
+        # F-2: timeout configurable (antes fijo en 600s).
+        self.timeout = int(
+            os.environ.get(
+                "ILU_OMNIROUTE_TIMEOUT",
+                "600"
+            )
+        )
 
     def _auth_headers(self):
         return {
@@ -462,6 +478,31 @@ class FallbackProvider(AIProvider):
         self.name = self.primary.name
         self.version = self.primary.version
 
+    def _fallback_to(self, message, context, tools):
+        fallback_result = self.fallback.generate(
+            message,
+            context=context,
+            tools=tools
+        )
+
+        if isinstance(fallback_result, dict):
+            # Visible para el orquestador/API: qué motor respondió.
+            fallback_result["fallback"] = True
+            fallback_result["provider_used"] = self.fallback.name
+            fallback_result["provider_used_version"] = (
+                self.fallback.version
+            )
+
+        return fallback_result
+
+    def _is_empty_text(self, result):
+        """Una respuesta 200 sin contenido es un fallo silencioso."""
+        return (
+            isinstance(result, dict)
+            and result.get("type") == "text"
+            and not (result.get("content") or "").strip()
+        )
+
     def generate(self, message, context=None, tools=None):
         result = self.primary.generate(
             message,
@@ -470,23 +511,14 @@ class FallbackProvider(AIProvider):
         )
 
         # Un error del primario (red caída, timeout, sin clave) dispara
-        # el fallback al respaldo local.
-        if isinstance(result, dict) and result.get("type") == "error":
-            fallback_result = self.fallback.generate(
-                message,
-                context=context,
-                tools=tools
-            )
-
-            if isinstance(fallback_result, dict):
-                # Visible para el orquestador/API: qué motor respondió.
-                fallback_result["fallback"] = True
-                fallback_result["provider_used"] = self.fallback.name
-                fallback_result["provider_used_version"] = (
-                    self.fallback.version
-                )
-
-            return fallback_result
+        # el fallback al respaldo local. También una respuesta vacía
+        # (200 sin contenido) se considera fallo: I.L.U. no debe quedarse
+        # callada cuando el motor no produjo nada.
+        if isinstance(result, dict) and (
+            result.get("type") == "error"
+            or self._is_empty_text(result)
+        ):
+            return self._fallback_to(message, context, tools)
 
         if isinstance(result, dict):
             result.setdefault("provider_used", self.primary.name)

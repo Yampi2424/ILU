@@ -12,12 +12,29 @@ window.ILUApi = (function () {
   'use strict';
 
   const BASE = '';
+  const TOKEN_KEY = 'ilu_device_token';
+
+  /**
+   * Cabecera de autorización del dispositivo.
+   *
+   * Las rutas administrativas (grants, autonomía, resolución de
+   * solicitudes, borrado de conversaciones) requieren el token de
+   * dispositivo. El owner lo configura con ILUApi.setToken(); se guarda
+   * en localStorage y se envía en cada petición.
+   */
+  function _authHeaders(extra) {
+    let headers = extra ? Object.assign({}, extra) : {};
+    let token = null;
+    try { token = window.localStorage.getItem(TOKEN_KEY); } catch (_) {}
+    if (token) headers['X-ILU-Token'] = token;
+    return headers;
+  }
 
   async function _get(path) {
     try {
       const response = await fetch(BASE + path, {
         method: 'GET',
-        headers: { 'Accept': 'application/json' }
+        headers: _authHeaders({ 'Accept': 'application/json' })
       });
       return await response.json();
     } catch (error) {
@@ -30,10 +47,10 @@ window.ILUApi = (function () {
     try {
       const response = await fetch(BASE + path, {
         method: 'POST',
-        headers: {
+        headers: _authHeaders({
           'Content-Type': 'application/json',
           'Accept': 'application/json'
-        },
+        }),
         body: JSON.stringify(body)
       });
       return await response.json();
@@ -47,10 +64,10 @@ window.ILUApi = (function () {
     try {
       const response = await fetch(BASE + path, {
         method: 'PUT',
-        headers: {
+        headers: _authHeaders({
           'Content-Type': 'application/json',
           'Accept': 'application/json'
-        },
+        }),
         body: JSON.stringify(body)
       });
       return await response.json();
@@ -64,7 +81,7 @@ window.ILUApi = (function () {
     try {
       const response = await fetch(BASE + path, {
         method: 'DELETE',
-        headers: { 'Accept': 'application/json' }
+        headers: _authHeaders({ 'Accept': 'application/json' })
       });
       return await response.json();
     } catch (error) {
@@ -74,6 +91,17 @@ window.ILUApi = (function () {
   }
 
   return {
+
+    // --- Autorización de dispositivo ---
+    setToken: function (token) {
+      try {
+        if (token) window.localStorage.setItem(TOKEN_KEY, token);
+        else window.localStorage.removeItem(TOKEN_KEY);
+      } catch (_) {}
+    },
+    hasToken: function () {
+      try { return !!window.localStorage.getItem(TOKEN_KEY); } catch (_) { return false; }
+    },
     // --- Estado ---
     healthz: function () { return _get('/healthz'); },
     about: function () { return _get('/about'); },

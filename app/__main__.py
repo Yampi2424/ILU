@@ -2,6 +2,7 @@ import os
 import json
 import time
 import mimetypes
+import secrets
 import threading
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,46 @@ settings = ILUSettings()
 
 # Directorio de archivos estáticos de la interfaz web (I.L.U. Presencia).
 WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
+
+
+# ----------------------------------------------------------------------
+# Token de dispositivo para rutas administrativas
+# ----------------------------------------------------------------------
+#
+# Las rutas que conceden permisos, cambian la autonomía o resuelven
+# solicitudes de autorización son acciones de AUTORIDAD: solo el owner
+# (y quienes poseen el token de este dispositivo) pueden invocarlas.
+#
+# El token se guarda en security/device.key (gitignored) y se genera en
+# el primer arranque. Protege la interfaz HTTP cuando I.L.U. escucha en
+# 0.0.0.0: un actor de la red no puede escalar a root sin el token.
+# /ask y los archivos estáticos permanecen abiertos para el uso normal.
+
+
+def _load_or_create_token(path):
+    """Carga el token de dispositivo o lo crea si no existe."""
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            token = handle.read().strip()
+        if token:
+            return token
+    except OSError:
+        pass
+
+    token = secrets.token_hex(32)
+
+    try:
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+    except OSError:
+        pass
+
+    return token
+
+
+# Token de autoridad de este dispositivo (cargado una sola vez).
+DEVICE_TOKEN = _load_or_create_token(settings.device_key_path)
 
 # I.L.U. usa un único TaskManager compartido entre el core y el HTTP:
 # el registro en memoria y en disco es el mismo para ambos.
@@ -37,7 +78,41 @@ def _run_in_background(fn):
     return thread
 
 
-def _run_task(task_id, callable_fn, args=None, kwargs=None):
+def _call_with_timeout(fn, args, kwargs, timeout):
+    """
+    Ejecuta `fn` en un hilo daemon con un límite de tiempo (F-3).
+
+    Devuelve:
+      {"timeout": True}        si supera el tiempo límite
+      {"result": r}            si termina a tiempo (r puede ser None)
+    Lanza la excepción de `fn` si esta ocurre antes del timeout.
+
+    No se puede matar un hilo en Python; el hilo huérfano se deja
+    como daemon (no bloquea el cierre del proceso) y la tarea se
+    declara fallida por timeout.
+    """
+    box = {}
+
+    def runner():
+        try:
+            box["result"] = fn(*(args or ()), **(kwargs or {}))
+        except Exception as exc:  # noqa: BLE001 - se propaga al caller
+            box["error"] = exc
+
+    thread = threading.Thread(target=runner, daemon=True)
+    thread.start()
+    thread.join(timeout)
+
+    if thread.is_alive():
+        return {"timeout": True}
+
+    if "error" in box:
+        raise box["error"]
+
+    return {"result": box.get("result")}
+
+
+def _run_task(task_id, callable_fn, args=None, kwargs=None, timeout=None):
     """
     Ejecutor de tareas en segundo plano con reintentos.
 
@@ -45,7 +120,17 @@ def _run_task(task_id, callable_fn, args=None, kwargs=None):
     resultado o el error. Si falla y aún quedan reintentos
     (max_retries de la tarea), lo intenta de nuevo; al agotarlos,
     marca la tarea como fallida.
+
+    timeout (segundos): límite por intento (F-3). Por defecto usa
+    ILU_TASK_TIMEOUT (300). Evita que una tarea en segundo plano se
+    quede colgada para siempre.
     """
+    if timeout is None:
+        try:
+            timeout = float(os.environ.get("ILU_TASK_TIMEOUT", "300"))
+        except ValueError:
+            timeout = 300.0
+
     task = task_manager.get(task_id)
     max_retries = (
         int(task.get("max_retries", 0) or 0)
@@ -56,10 +141,19 @@ def _run_task(task_id, callable_fn, args=None, kwargs=None):
 
     while True:
         try:
-            result = callable_fn(
-                *(args or ()),
-                **(kwargs or {})
+            outcome = _call_with_timeout(
+                callable_fn,
+                args,
+                kwargs,
+                timeout,
             )
+
+            if outcome.get("timeout"):
+                raise TimeoutError(
+                    f"La tarea superó el límite de {timeout}s."
+                )
+
+            result = outcome.get("result")
 
             task_manager.set_result(task_id, result)
 
@@ -178,6 +272,32 @@ class ILUHandler(BaseHTTPRequestHandler):
             return {}
 
         return json.loads(raw_body.decode("utf-8"))
+
+    def _authorized(self):
+        """
+        True si el request demuestra posesión del token de dispositivo.
+
+        Se acepta el token por:
+          - cabecera 'Authorization: Bearer <token>'
+          - cabecera 'X-ILU-Token: <token>'
+          - query '?token=<token>'
+
+        La comparación es en tiempo constante (secrets.compare_digest)
+        para no filtrar el token por temporización.
+        """
+        header = self.headers.get("Authorization", "")
+        if header.startswith("Bearer "):
+            provided = header[7:].strip()
+        else:
+            provided = self.headers.get("X-ILU-Token", "")
+
+        if not provided:
+            provided = _query_params(self.path).get("token", "")
+
+        if not provided or not DEVICE_TOKEN:
+            return False
+
+        return secrets.compare_digest(provided, DEVICE_TOKEN)
 
     def _send_file(self, relative_path):
         """
@@ -397,8 +517,22 @@ class ILUHandler(BaseHTTPRequestHandler):
             "error": "not_found"
         })
 
+    def _require_device_token(self):
+        """Envía 401 si el request no demuestra el token de dispositivo."""
+        if not self._authorized():
+            self.send_json(401, {
+                "success": False,
+                "error": "unauthorized",
+                "message": "Se requiere el token de dispositivo para esta acción."
+            })
+            return False
+        return True
+
     def _grant(self):
         """Concede un permiso. Authority valida que el actor sea raíz."""
+        if not self._require_device_token():
+            return
+
         try:
             data = self._read_json()
 
@@ -451,6 +585,9 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def _resolve_authorization_request(self, request_id):
         """Concede o deniega una solicitud abierta (solo un raíz)."""
+        if not self._require_device_token():
+            return
+
         try:
             data = self._read_json()
 
@@ -509,6 +646,9 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def _change_autonomy(self):
         """Cambia el nivel de autonomía (solo un principal raíz)."""
+        if not self._require_device_token():
+            return
+
         try:
             data = self._read_json()
 
@@ -652,6 +792,10 @@ class ILUHandler(BaseHTTPRequestHandler):
             and segments[0] == "conversations"
         ):
             # Bloque 10: resetear el historial de una sesión.
+            # Borrar datos es una acción destructiva: requiere el token.
+            if not self._require_device_token():
+                return
+
             session_id = segments[1]
 
             core.conversations.reset(session_id)

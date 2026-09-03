@@ -190,3 +190,66 @@ def test_grant_id_generator():
     assert a != b
     assert a.startswith("gr_")
     assert b.startswith("gr_")
+
+# ------------------------------------------------------------------
+# D-2/D-3 — matches() verifica actor; has_valid_for no consume
+# ------------------------------------------------------------------
+
+def test_matches_enforces_actor(tmp_path):
+    """Un grant para 'ilu' NO debe servir a un actor distinto."""
+    store = GrantStore(path=str(tmp_path / "grants.jsonl"))
+
+    grant = store.add(Grant(
+        capability="write_file",
+        grantor="owner",
+        grantee="ilu",
+        expires_at="2099-01-01T00:00:00Z",
+    ))
+
+    # El destinatario legítimo sí coincide.
+    assert grant.matches("write_file", actor="ilu")
+    assert store.find_active("write_file", actor="ilu") is not None
+
+    # Un actor ajeno NO debe usar el grant de "ilu".
+    assert not grant.matches("write_file", actor="attacker")
+    assert store.find_active("write_file", actor="attacker") is None
+
+
+def test_matches_actor_empty_actor_kept_backward_compat(tmp_path):
+    """Sin actor explícito se mantiene el comportamiento previo."""
+    store = GrantStore(path=str(tmp_path / "grants.jsonl"))
+
+    grant = store.add(Grant(
+        capability="write_file",
+        grantor="owner",
+        grantee="ilu",
+        expires_at="2099-01-01T00:00:00Z",
+    ))
+
+    assert grant.matches("write_file")  # actor=None
+    assert store.find_active("write_file") is not None
+
+
+def test_has_valid_for_does_not_consume(tmp_path):
+    """
+    Preguntar '¿hay permiso?' con has_valid_for NO debe quemar un grant
+    de un solo uso (a diferencia de find_active, que sí lo consume).
+    """
+    store = GrantStore(path=str(tmp_path / "grants.jsonl"))
+
+    store.add(Grant(
+        capability="write_file",
+        grantor="owner",
+        max_uses=1,
+    ))
+
+    # Múltiples comprobaciones puras: el grant sigue activo.
+    assert store.has_valid_for("write_file") is True
+    assert store.has_valid_for("write_file") is True
+    assert store.has_valid_for("write_file") is True
+
+    # El grant sigue sin consumir.
+    assert store.find_active("write_file") is not None
+
+    # Tras un uso real, sí se agota.
+    assert store.find_active("write_file") is None

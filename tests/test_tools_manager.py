@@ -142,3 +142,47 @@ def test_tool_call_value_object():
         "arguments": {},
         "reason": "hora"
     }
+
+def test_execute_rejects_invalid_arguments_centrally():
+    """
+    D-5 — La validación de esquema vive en ToolManager.execute: cualquier
+    camino (core o subagente) rechaza argumentos inválidos sin ejecutar.
+    """
+    manager = ToolManager()
+    calls = []
+
+    def handler(**kwargs):
+        calls.append(kwargs)
+        return "ok"
+
+    manager.register(
+        name="escribir",
+        description="Requiere path y content",
+        handler=handler,
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "content": {"type": "string"}
+            },
+            "required": ["path", "content"]
+        }
+    )
+
+    # Falta 'content' -> rechazado, el handler NO se ejecuta.
+    result = manager.execute("escribir", path="a.txt")
+    assert result["success"] is False
+    assert result["validation"] == "failed"
+    assert "missing_required_argument" in result["error"]
+    assert calls == []
+
+    # Tipo inválido -> rechazado.
+    result = manager.execute("escribir", path="a.txt", content=123)
+    assert result["success"] is False
+    assert result["validation"] == "failed"
+
+    # Argumentos válidos -> el handler sí se ejecuta.
+    result = manager.execute("escribir", path="a.txt", content="hola")
+    assert result["success"] is True
+    assert calls == [{"path": "a.txt", "content": "hola"}]

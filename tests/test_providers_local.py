@@ -216,3 +216,30 @@ def test_local_native_tool_call_denied(monkeypatch):
 
     assert result["type"] == "text"
     assert "shell" in result["content"]
+
+
+# ------------------------------------------------------------------
+# F-1 — num_predict configurable (ILU_LOCAL_MAX_TOKENS)
+# ------------------------------------------------------------------
+
+def test_local_max_tokens_configurable(monkeypatch):
+    monkeypatch.setenv("ILU_LOCAL_MODEL", "modelo-test")
+    monkeypatch.setenv("ILU_OLLAMA_URL", "http://ollama.test:11434")
+    monkeypatch.setenv("ILU_LOCAL_MAX_TOKENS", "512")
+
+    provider = LocalProvider()
+
+    assert provider.max_tokens == 512
+
+    payload = {
+        "message": {"role": "assistant", "content": "hola"}
+    }
+
+    with mock.patch(
+        "app.providers.requests.post",
+        return_value=FakeResponse(payload)
+    ) as post:
+        provider.generate("hola")
+
+    sent = post.call_args.kwargs["json"]
+    assert sent["options"]["num_predict"] == 512

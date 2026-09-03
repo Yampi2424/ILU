@@ -227,6 +227,7 @@ def test_spoofing_does_not_deny_below_threshold(tmp_path):
     store.add(Grant(
         capability="write_file",
         grantor="owner",
+        grantee="intruso",   # el grant es del actor que se está evaluando
         expires_at="2099-01-01T00:00:00Z",
     ))
     spoofing = SpoofingGuard(threshold=5, window_seconds=300)
@@ -239,4 +240,5 @@ def test_spoofing_does_not_deny_below_threshold(tmp_path):
     )
 
     # 1 fallo < umbral 5: el spoofing NO dispara; el grant permite.
+    # (Un grant SOLO cubre a su grantee: actor y grantee coinciden aquí.)
     assert decision["decision"] == "allow"

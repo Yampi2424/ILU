@@ -1,3 +1,6 @@
+from app.toolshape import validate_arguments
+
+
 class ToolManager:
     """
     Administrador central de herramientas de I.L.U.
@@ -105,6 +108,25 @@ class ToolManager:
                 "success": False,
                 "error": "tool_blocked",
                 "tool": name
+            }
+
+        # Validación centralizada (Bloque 11/D-5): TODO argumento se valida
+        # contra el JSON-schema de la tool AQUÍ, en el único punto de
+        # ejecución. Así, cualquier camino que pase por execute() (core,
+        # subagente, pruebas) rechaza argumentos inválidos de forma
+        # honesta (fail-closed) sin ejecutar. Una tool sin esquema siempre
+        # pasa (retrocompatibilidad).
+        schema_ok, schema_error = validate_arguments(
+            tool.get("schema"),
+            kwargs,
+        )
+
+        if not schema_ok:
+            return {
+                "success": False,
+                "tool": name,
+                "error": schema_error,
+                "validation": "failed",
             }
 
         try:

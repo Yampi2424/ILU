@@ -353,3 +353,33 @@ def test_list_tasks_filters_by_state(tmp_path):
 
     finally:
         server.shutdown()
+
+
+# ------------------------------------------------------------------
+# F-3 — Una tarea en segundo plano que se cuelga NO queda para siempre
+# ------------------------------------------------------------------
+
+def test_background_task_timeout(tmp_path):
+    """
+    _run_task con un timeout corto marca la tarea como fallida aunque el
+    callable se quede colgado (no puede matarse un hilo, pero la tarea no
+    queda 'running' eternamente).
+    """
+    import app.__main__ as main
+    import time as _time
+
+    def se_cuelga():
+        while True:
+            _time.sleep(0.05)
+
+    task = main.task_manager.create(
+        title="colgada",
+        description="nunca termina",
+    )
+
+    # timeout=0.2s: se agota el tiempo del primer intento.
+    main._run_task(task["id"], se_cuelga, timeout=0.2)
+
+    final = main.task_manager.get(task["id"])
+    assert final["state"] == "failed"
+    assert "tiempo" in (final.get("error") or "").lower() or "superó" in (final.get("error") or "")

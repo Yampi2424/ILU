@@ -151,3 +151,31 @@ def test_real_omniroute_error_falls_back_to_local(monkeypatch):
     assert result["content"] == "local ok"
     assert result["fallback"] is True
     assert result["provider_used"] == "ollama"
+
+
+# ------------------------------------------------------------------
+# F-2 — Respuesta vacía (200 sin contenido) también dispara fallback
+# ------------------------------------------------------------------
+
+def test_primary_empty_text_triggers_fallback():
+    class Primary:
+        name = "cloud"
+        version = "1"
+        def generate(self, message, context=None, tools=None):
+            return {"type": "text", "content": "   "}
+
+    class Backend:
+        name = "local"
+        version = "1"
+        def generate(self, message, context=None, tools=None):
+            return {"type": "text", "content": "respuesta local"}
+
+    from app.providers import FallbackProvider
+
+    fb = FallbackProvider(primary=Primary(), fallback=Backend())
+
+    result = fb.generate("hola")
+
+    assert result["type"] == "text"
+    assert result["content"] == "respuesta local"
+    assert result["fallback"] is True

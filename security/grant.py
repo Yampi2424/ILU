@@ -187,6 +187,13 @@ class Grant:
         if capability != self.capability:
             return False
 
+        # Un grant autoriza a un destinatario concreto (grantee). Si el
+        # solicitante es conocido (actor no vacío) debe coincidir con el
+        # grantee; de lo contrario, un grant para "ilu" serviría a
+        # cualquier actor de la red (escalada de privilegios).
+        if actor is not None and actor != self.grantee:
+            return False
+
         if self.scope_type == "task":
             task_id = context.get("task_id") if isinstance(context, dict) else None
             if task_id is None or task_id != self.task_id:

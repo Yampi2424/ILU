@@ -107,3 +107,59 @@ def test_failures_count_reported():
     guard.record_failure("intruso", "write_file")
 
     assert guard.failures("intruso") == 2
+
+# ------------------------------------------------------------------
+# D-7 — El guard está conectado a la verificación de identidad del core
+# ------------------------------------------------------------------
+
+def test_core_verification_ok_recognizes_ilu_and_owner():
+    """
+    El core considera verificado a I.L.U. misma y al owner raíz; cualquier
+    identidad ajena NO está verificada (queda bajo vigilancia).
+    """
+    from app.core import ILUCore
+
+    core = ILUCore()
+
+    assert core._verification_ok("ilu") is True
+    assert core._verification_ok(core.settings.owner_id) is True
+    assert core._verification_ok("intruso-desconocido") is False
+
+
+def test_unverified_high_sensitivity_escalates_to_deny(tmp_path):
+    """
+    Verificación funcional de spoofing: un actor NO verificado que insiste
+    en una capacidad sensible (alta sensibilidad) acaba siendo DENEGADO por
+    suplantación, no solo preguntado.
+    """
+    from app.security import SecurityGate
+    from security.spoofing import SpoofingGuard
+    from security.policy import Policy
+    from app.audit import AuditLog
+
+    gate = SecurityGate(autonomy_level="autonomous")
+    policy = Policy()
+    spoofing = SpoofingGuard(
+        audit=AuditLog(path=str(tmp_path / "audit.jsonl")),
+        threshold=3,
+        window_seconds=300,
+    )
+
+    # write_file es sensibilidad alta (policy).
+    assert policy.sensitivity("write_file") == "high"
+
+    for _ in range(3):
+        decision = gate.decide(
+            "write_file", "ask", mode="model",
+            capability="write_file",
+            actor="intruso",
+            context={},
+            grant_store=None,
+            policy=policy,
+            spoofing=spoofing,
+            verification_ok=False,  # identidad no verificada
+        )
+
+    # Tras el umbral: sospecha de suplantación -> deny.
+    assert decision["decision"] == "deny"
+    assert decision["reason"] == "identity_suspected"

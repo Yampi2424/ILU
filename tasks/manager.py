@@ -1,5 +1,6 @@
 import json
 import os
+import threading
 import time
 import uuid
 
@@ -37,6 +38,15 @@ class TaskManager:
 
         self.path = path
         self.tasks = {}
+
+        # D-6: reentrant lock para concurrencia. El TaskManager se usa
+        # desde hilos del servidor HTTP (ThreadingHTTPServer) y desde
+        # tareas en segundo plano (_run_task) a la vez: sin lock, un
+        # read-modify-write simultáneo pierde actualizaciones o corrompe
+        # el archivo al guardar. RLock permite que los métodos mutantes
+        # llamen a save() (que también toma el lock) sin interbloquearse.
+        self._lock = threading.RLock()
+
         self._load()
 
     # ------------------------------------------------------------------
@@ -53,19 +63,20 @@ class TaskManager:
         self.tasks = data.get("tasks", {}) if isinstance(data, dict) else {}
 
     def save(self):
-        try:
-            with open(self.path, "w", encoding="utf-8") as handle:
-                json.dump(
-                    {"tasks": self.tasks},
-                    handle,
-                    ensure_ascii=False,
-                    indent=2
-                )
-            return True
-        except OSError:
-            # Persistencia best-effort: una tarea en memoria no debe
-            # romper al sistema si el disco falla.
-            return False
+        with self._lock:
+            try:
+                with open(self.path, "w", encoding="utf-8") as handle:
+                    json.dump(
+                        {"tasks": self.tasks},
+                        handle,
+                        ensure_ascii=False,
+                        indent=2
+                    )
+                return True
+            except OSError:
+                # Persistencia best-effort: una tarea en memoria no debe
+                # romper al sistema si el disco falla.
+                return False
 
     # ------------------------------------------------------------------
     # Consulta
@@ -107,70 +118,72 @@ class TaskManager:
     # ------------------------------------------------------------------
 
     def create(self, title, description="", priority=5, state="created", max_retries=None):
-        title = (title or "").strip()
+        with self._lock:
+            title = (title or "").strip()
 
-        if not title:
-            raise ValueError("task_title_required")
+            if not title:
+                raise ValueError("task_title_required")
 
-        if max_retries is None:
-            try:
-                max_retries = int(
-                    os.environ.get(
-                        "ILU_TASK_MAX_RETRIES",
-                        "3"
+            if max_retries is None:
+                try:
+                    max_retries = int(
+                        os.environ.get(
+                            "ILU_TASK_MAX_RETRIES",
+                            "3"
+                        )
                     )
-                )
-            except ValueError:
-                max_retries = 3
+                except ValueError:
+                    max_retries = 3
 
-        task_id = uuid.uuid4().hex[:12]
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            task_id = uuid.uuid4().hex[:12]
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        task = {
-            "id": task_id,
-            "title": title,
-            "description": description,
-            "priority": priority,
-            "state": state,
-            "progress": 0,
-            "result": None,
-            "error": None,
-            "retries": 0,
-            "max_retries": max_retries,
-            "created_at": now,
-            "updated_at": now,
-            "started_at": None,
-            "completed_at": None
-        }
+            task = {
+                "id": task_id,
+                "title": title,
+                "description": description,
+                "priority": priority,
+                "state": state,
+                "progress": 0,
+                "result": None,
+                "error": None,
+                "retries": 0,
+                "max_retries": max_retries,
+                "created_at": now,
+                "updated_at": now,
+                "started_at": None,
+                "completed_at": None
+            }
 
-        self.tasks[task_id] = task
-        self.save()
+            self.tasks[task_id] = task
+            self.save()
 
-        return task
+            return task
 
     def set_state(self, task_id, state):
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        if state not in self.VALID_STATES:
-            raise ValueError("invalid_task_state")
+            if state not in self.VALID_STATES:
+                raise ValueError("invalid_task_state")
 
-        now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            now = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
-        task["state"] = state
-        task["updated_at"] = now
+            task["state"] = state
+            task["updated_at"] = now
 
-        if state == "running" and not task["started_at"]:
-            task["started_at"] = now
+            if state == "running" and not task["started_at"]:
+                task["started_at"] = now
 
-        if state in ("completed", "failed", "cancelled"):
-            task["completed_at"] = now
+            if state in ("completed", "failed", "cancelled"):
+                task["completed_at"] = now
 
-        self.save()
+            self.save()
 
-        return task
+            return task
 
     def wait_for_authorization(self, task_id, request_id):
         """
@@ -178,94 +191,99 @@ class TaskManager:
         autorización (Bloque 8). La tarea queda en estado "paused" con
         el campo waiting_authorization apuntando a la solicitud abierta.
         """
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        task["state"] = "paused"
-        task["waiting_authorization"] = request_id
-        task["updated_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime()
-        )
+            task["state"] = "paused"
+            task["waiting_authorization"] = request_id
+            task["updated_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            )
 
-        self.save()
+            self.save()
 
-        return task
+            return task
 
     def set_progress(self, task_id, progress):
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        try:
-            progress = int(progress)
-        except (TypeError, ValueError):
-            raise ValueError("invalid_progress")
+            try:
+                progress = int(progress)
+            except (TypeError, ValueError):
+                raise ValueError("invalid_progress")
 
-        progress = max(0, min(100, progress))
+            progress = max(0, min(100, progress))
 
-        task["progress"] = progress
-        task["updated_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime()
-        )
+            task["progress"] = progress
+            task["updated_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            )
 
-        self.save()
+            self.save()
 
-        return task
+            return task
 
     def record_retry(self, task_id):
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        task["retries"] = task.get("retries", 0) + 1
-        task["updated_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime()
-        )
+            task["retries"] = task.get("retries", 0) + 1
+            task["updated_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            )
 
-        self.save()
+            self.save()
 
-        return task["retries"]
+            return task["retries"]
 
     def set_result(self, task_id, result):
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        task["result"] = result
-        task["state"] = "completed"
-        task["progress"] = 100
-        task["completed_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime()
-        )
-        task["updated_at"] = task["completed_at"]
+            task["result"] = result
+            task["state"] = "completed"
+            task["progress"] = 100
+            task["completed_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            )
+            task["updated_at"] = task["completed_at"]
 
-        self.save()
+            self.save()
 
-        return task
+            return task
 
     def set_error(self, task_id, error):
-        task = self.tasks.get(task_id)
+        with self._lock:
+            task = self.tasks.get(task_id)
 
-        if task is None:
-            return None
+            if task is None:
+                return None
 
-        task["error"] = error
-        task["state"] = "failed"
-        task["completed_at"] = time.strftime(
-            "%Y-%m-%dT%H:%M:%SZ",
-            time.gmtime()
-        )
-        task["updated_at"] = task["completed_at"]
+            task["error"] = error
+            task["state"] = "failed"
+            task["completed_at"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.gmtime()
+            )
+            task["updated_at"] = task["completed_at"]
 
-        self.save()
+            self.save()
 
-        return task
+            return task

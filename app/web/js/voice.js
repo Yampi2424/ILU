@@ -74,14 +74,45 @@ window.ILUVoice = (function () {
   /**
    * Síntesis de voz (TTS) vía Web Speech API (voces del sistema).
    * Devuelve null si el navegador no lo soporta.
+   *
+   * Selección de voz: prioriza voz femenina en español (determinista,
+   * no aleatoria). Fallback controlado: español → cualquier voz.
    */
   function createWebSpeechSynthesizer() {
     if (!window.speechSynthesis) return null;
+
+    // Indicadores de voz femenina en nombres de voces comunes (ES)
+    var FEMALE_INDICATORS = [
+      'sabina', 'helena', 'lucia', 'monica', 'laura', 'isabel',
+      'elena', 'maria', 'carmen', 'sofia', 'valeria', 'camila',
+      'female', 'woman', 'mujer', 'femenina'
+    ];
+
+    function _selectBestVoice(voices) {
+      var es = voices.filter(function (v) {
+        return v.lang && v.lang.indexOf('es') === 0;
+      });
+      if (!es.length) return voices[0] || null;
+
+      // Buscar voz femenina por nombre (case-insensitive)
+      var female = es.find(function (v) {
+        var name = (v.name || '').toLowerCase();
+        return FEMALE_INDICATORS.some(function (ind) { return name.indexOf(ind) !== -1; });
+      });
+      if (female) return female;
+
+      // Fallback controlado: primera voz en español (determinista)
+      return es[0];
+    }
 
     return {
       isAvailable: function () { return true; },
       getVoices: function () {
         return window.speechSynthesis.getVoices() || [];
+      },
+      getSelectedVoice: function () {
+        var voices = this.getVoices();
+        return _selectBestVoice(voices);
       },
       speak: function (text, handlers) {
         var utter = new SpeechSynthesisUtterance(text);
@@ -89,11 +120,14 @@ window.ILUVoice = (function () {
         utter.rate = 1.0;
         utter.pitch = 1.0;
 
-        var voices = this.getVoices();
-        var es = voices.filter(function (v) {
-          return v.lang && v.lang.indexOf('es') === 0;
-        });
-        if (es.length) utter.voice = es[0];
+        var voice = _selectBestVoice(this.getVoices());
+        if (voice) {
+          utter.voice = voice;
+          // Log para depuración: qué voz se usa
+          console.log('[ILUVoice] TTS voice:', voice.name, voice.lang, voice.default ? '(default)' : '');
+        } else {
+          console.warn('[ILUVoice] No voices available, using browser default');
+        }
 
         if (handlers.onStart) utter.onstart = handlers.onStart;
         if (handlers.onEnd) utter.onend = handlers.onEnd;

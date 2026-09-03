@@ -269,6 +269,58 @@ class TestVoiceArchitecture:
 # Sin regresiones
 # ------------------------------------------------------------------
 
+class TestVoiceSelection:
+    """Tests para la selección de voz femenina en TTS."""
+
+    def test_female_voice_indicators_present(self):
+        """El código debe contener indicadores de voz femenina en español."""
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "web", "js", "voice.js")
+        with open(path) as f:
+            content = f.read()
+        # Debe tener lista de indicadores femeninos
+        assert "FEMALE_INDICATORS" in content
+        # Verificar algunos indicadores clave
+        for ind in ['sabina', 'helena', 'lucia', 'female', 'mujer']:
+            assert ind in content.lower(), f"Missing female indicator: {ind}"
+
+    def test_select_best_voice_logic(self):
+        """Debe existir función _selectBestVoice con lógica determinista."""
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "web", "js", "voice.js")
+        with open(path) as f:
+            content = f.read()
+        assert "_selectBestVoice" in content
+        # Debe filtrar por español primero
+        assert "indexOf('es') === 0" in content
+        # Debe buscar indicadores femeninos
+        assert "FEMALE_INDICATORS" in content
+        # Debe tener fallback a primera voz en español
+        assert "es[0]" in content
+
+    def test_get_selected_voice_exposed(self):
+        """El sintetizador debe exponer getSelectedVoice para tests/debug."""
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "web", "js", "voice.js")
+        with open(path) as f:
+            content = f.read()
+        assert "getSelectedVoice" in content
+
+    def test_speak_uses_selected_voice(self):
+        """speak() debe usar la voz seleccionada, no la primera al azar."""
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "web", "js", "voice.js")
+        with open(path) as f:
+            content = f.read()
+        # Debe llamar a _selectBestVoice dentro de speak
+        assert "_selectBestVoice(this.getVoices())" in content
+        # Debe asignar utter.voice = voice
+        assert "utter.voice = voice" in content
+
+    def test_fallback_when_no_spanish(self):
+        """Si no hay voces en español, debe usar la primera voz disponible."""
+        path = os.path.join(os.path.dirname(__file__), "..", "app", "web", "js", "voice.js")
+        with open(path) as f:
+            content = f.read()
+        assert "if (!es.length) return voices[0] || null" in content
+
+
 class TestNoRegressions:
 
     def test_chat_ask_still_works(self, voice_server):

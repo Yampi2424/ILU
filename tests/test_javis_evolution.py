@@ -358,13 +358,19 @@ class TestPerceptionHub:
         assert result["available"] is True
         assert "uptime_seconds" in result["data"]
 
-    def test_stub_sensor_unavailable(self):
+    def test_camera_driver_contract(self):
+        # La cámara es hardware-aware: si hay hardware, está disponible y
+        # devuelve datos; si no, reporta un motivo honesto. Nunca lanza.
         hub = PerceptionHub()
         hub.register(CameraDriver())
 
         result = hub.perceive("camera")
-        assert result["available"] is False
-        assert result["reason"] == "hardware_or_api_unavailable"
+        assert result["available"] in (True, False)
+        assert "capability" in result
+        if result["available"]:
+            assert "cameras" in result["data"]
+        else:
+            assert result["reason"] in ("no_camera_device",)
 
     def test_no_driver(self):
         hub = PerceptionHub()
@@ -388,8 +394,10 @@ class TestPerceptionHub:
 
         caps = hub.list_capabilities()
         by_name = {c["capability"]: c["available"] for c in caps}
+        # system_state es real y local: siempre disponible.
         assert by_name["system_state"] is True
-        assert by_name["camera"] is False
+        # camera es hardware-aware: disponible si hay hardware real.
+        assert by_name["camera"] in (True, False)
 
 
 # ------------------------------------------------------------------

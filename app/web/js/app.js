@@ -227,6 +227,13 @@
       parts.push('te conozco');
     }
 
+    if (awareness.perception && awareness.perception.length > 0) {
+      var sensed = awareness.perception
+        .map(function (p) { return p.summary; })
+        .filter(Boolean);
+      if (sensed.length) parts.push(sensed.join(' · '));
+    }
+
     el.textContent = parts.length ? parts.join(' · ') : '';
   }
 

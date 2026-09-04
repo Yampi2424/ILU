@@ -424,10 +424,14 @@ class ILUCore:
         except Exception:
             awareness["goals"] = []
 
-        # 4) Percepción: solo los sensores realmente disponibles.
+        # 4) Percepción: solo los sensores realmente disponibles, con un
+        #    resumen del dato real sensado (no solo el nombre).
         try:
             awareness["perception"] = [
-                {"capability": cap["capability"]}
+                {
+                    "capability": cap["capability"],
+                    "summary": self._perception_snapshot(cap["capability"]),
+                }
                 for cap in self.perception.list_capabilities()
                 if cap["available"]
             ]
@@ -449,6 +453,50 @@ class ILUCore:
             awareness["proactive"] = []
 
         return awareness
+
+    def _perception_snapshot(self, capability):
+        """
+        Compacta el dato REAL de un sensor disponible a una línea legible
+        para el prompt del modelo y la etiqueta de presencia. Nunca lanza:
+        la percepción es best-effort (el entorno puede cambiar).
+        """
+        try:
+            result = self.perception.perceive(capability)
+            if not result.get("available"):
+                return None
+            data = result.get("data") or {}
+
+            if capability == "network":
+                gateway = (data.get("gateway") or {}).get("gateway")
+                text = "red " + str(data.get("connectivity", "?"))
+                if gateway:
+                    text += " gw " + gateway
+                ifaces = len(data.get("interfaces", {}))
+                if ifaces:
+                    text += f" ({ifaces} ifaces)"
+                return text
+
+            if capability == "proximity":
+                return (
+                    f"{data.get('human_count', 0)} humano(s), "
+                    f"{data.get('lan_device_count', 0)} dispositivos LAN"
+                )
+
+            if capability == "audio":
+                return f"{len(data.get('microphones', []))} micrófono(s)"
+
+            if capability == "camera":
+                return f"{len(data.get('cameras', []))} cámara(s)"
+
+            if capability == "system_state":
+                return f"uptime {data.get('uptime_seconds', 0)}s"
+
+            if capability == "filesystem":
+                return f"{data.get('count', 0)} archivos"
+
+            return capability
+        except Exception:
+            return None
 
     def _awareness_context(self, awareness):
         """
@@ -489,7 +537,7 @@ class ILUCore:
             items.append({
                 "role": "percepción disponible",
                 "content": " | ".join(
-                    sensor["capability"]
+                    f"{sensor['capability']}: {sensor.get('summary') or 'disponible'}"
                     for sensor in awareness["perception"]
                 ),
             })

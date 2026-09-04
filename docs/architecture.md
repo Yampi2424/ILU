@@ -290,8 +290,12 @@ excepción (`tool_execution_failed`) siguen igual.
 
 ### Limitaciones / PLANIFICADO
 
-- Registro de **autorizaciones previas** (para que `ask` pueda concederse
-  una vez y recordarse) — PLANIFICADO.
+- **Autorizaciones previas recordadas** ✓ (Bloque siguiente): al resolver
+  una solicitud, `remember=True` emite un grant DURABLE que SecurityGate
+  reutiliza en futuras ejecuciones de la misma capacidad; `indefinite`
+  lo hace no-vigente-pero-siempre-revocable. Por lenguaje natural,
+  "autoriza siempre X" / "recuerda que puedes X" emiten un permiso
+  recordado, y "autoriza X" sigue siendo de UN solo uso (menor privilegio).
 - `write_file` solo se prueba con proveedor fake (la ejecución real del
   LLM requiere Ollama/red).
 - `web_search` usa solo Instant Answers (1 resultado); un buscador real es

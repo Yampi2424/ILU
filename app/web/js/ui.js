@@ -351,10 +351,13 @@ window.ILUUI = (function () {
             + '<div style="font-size:12px; color:var(--ilu-text-dim);">'
             + _escapeHtml(r.reason || 'Sin razón')
             + '</div></div>'
-            + '<div style="display:flex; gap:4px;">'
+            + '<div style="display:flex; gap:4px; flex-wrap:wrap;">'
             + '<button class="action-btn primary" '
             + 'onclick="ILUUI.resolveAuth(\'' + _escapeHtml(r.key || r.request_id || '') + '\', \'granted\')">'
             + 'Conceder</button>'
+            + '<button class="action-btn" title="Concede una vez y lo recuerda: I.L.U. podrá usarlo sin volver a preguntar" '
+            + 'onclick="ILUUI.resolveAuth(\'' + _escapeHtml(r.key || r.request_id || '') + '\', \'granted\', true)">'
+            + 'Conceder y recordar</button>'
             + '<button class="action-btn danger" '
             + 'onclick="ILUUI.resolveAuth(\'' + _escapeHtml(r.key || r.request_id || '') + '\', \'denied\')">'
             + 'Denegar</button>'
@@ -389,7 +392,7 @@ window.ILUUI = (function () {
     }
   }
 
-  async function resolveAuth(requestId, decision) {
+  async function resolveAuth(requestId, decision, remember) {
     const actor = prompt('Tu identidad (actor):');
     if (!actor) return;
 
@@ -397,7 +400,10 @@ window.ILUUI = (function () {
       requestId,
       actor,
       decision,
-      decision === 'granted' ? 'Concedido desde la interfaz' : 'Denegado desde la interfaz'
+      decision === 'granted'
+        ? (remember ? 'Concedido y recordado desde la interfaz' : 'Concedido desde la interfaz')
+        : 'Denegado desde la interfaz',
+      remember ? { remember: true, indefinite: true } : undefined
     );
 
     if (result.success) {

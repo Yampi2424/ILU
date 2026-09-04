@@ -177,10 +177,13 @@ window.ILUApi = (function () {
       return _get('/authorization-requests');
     },
 
-    resolveAuthRequest: function (requestId, actor, decision, reason) {
+    resolveAuthRequest: function (requestId, actor, decision, reason, opts) {
+      var body = { actor: actor, decision: decision, reason: reason || '' };
+      if (opts && opts.remember) body.remember = true;
+      if (opts && opts.indefinite) body.indefinite = true;
       return _post(
         '/authorization-requests/' + encodeURIComponent(requestId),
-        { actor: actor, decision: decision, reason: reason || '' }
+        body
       );
     },
 

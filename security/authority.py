@@ -159,6 +159,12 @@ class Authority:
         if level == "execution" and self.policy.is_prohibited(capability):
             raise ValueError("capability_prohibited")
 
+        # Un permiso RECORDADO (indefinido pero revocable) nunca es de un
+        # solo uso: "no expira pero se consume en 1 uso" sería
+        # contradictorio. Se trata como DURABLE.
+        if scope_type == "single_action" and indefinite:
+            scope_type = "duration"
+
         # Un alcance "single_action" significa UN solo uso:  si no se
         # especificó un tope de usos, se fija 1 para que el grant se
         # consuma en la primera ejecución protegida.
@@ -281,12 +287,23 @@ class Authority:
         actor,
         scope=None,
         duration=None,
-        reason=""
+        reason="",
+        remember=False,
+        indefinite=False
     ):
         """
         Resuelve una solicitud abierta ("Necesito autorización para X").
         decision: "granted" | "denied". Si se concede, emite el grant
         correspondiente (con el scope que el humano eligió).
+
+        remember=True → "concede una vez y recuérdalo": en lugar de un
+        grant de UN solo uso, se emite un grant DURABLE (alcance
+        "duration", con la duración por defecto de policy) que SecurityGate
+        reutilizará en futuras ejecuciones de la misma capacidad.
+
+        indefinite=True → además el grant no expira (sigue siendo
+        revocable). Ningún grant es permanente por defecto: la
+        revocabilidad y la auditoría se conservan siempre.
         """
         self._require_root(actor)
 
@@ -301,6 +318,12 @@ class Authority:
         if decision == "granted":
             scope = scope or request.scope or {}
 
+            # Autorización recordada: durable en lugar de un solo uso.
+            if remember or indefinite:
+                scope.setdefault("type", "duration")
+                if indefinite:
+                    scope["indefinite"] = True
+
             grant = self.grant(
                 capability=request.capability,
                 actor=actor,
@@ -313,10 +336,15 @@ class Authority:
                 task_id=request.task_id,
                 max_uses=scope.get("max_uses"),
                 duration=duration,
+                indefinite=scope.get("indefinite", False),
                 request_id=request_id,
             )
 
-            return {"success": True, "grant": grant}
+            return {
+                "success": True,
+                "grant": grant,
+                "remembered": bool(remember or indefinite),
+            }
 
         self._resolve_request(request_id, "denied", actor)
 

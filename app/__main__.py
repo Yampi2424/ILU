@@ -747,6 +747,8 @@ class ILUHandler(BaseHTTPRequestHandler):
                 scope=data.get("scope"),
                 duration=data.get("duration"),
                 reason=data.get("reason", ""),
+                remember=bool(data.get("remember")),
+                indefinite=bool(data.get("indefinite")),
             )
 
             if not result["success"]:
@@ -762,6 +764,7 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "success": True,
                 "request_id": request_id,
                 "decision": decision,
+                "remembered": result.get("remembered", False),
                 "grant": grant.to_dict() if grant else None
             })
 

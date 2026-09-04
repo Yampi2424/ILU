@@ -1246,10 +1246,21 @@ class ILUCore:
         grant_prefixes = (
             "autoriza ",
             "autorizá ",
+            "autoriza siempre ",
+            "autorizá siempre ",
             "concede permiso para ",
             "concedé permiso para ",
+            "concede permiso siempre para ",
+            "concedé permiso siempre para ",
             "da permiso para ",
             "dá permiso para ",
+            "da permiso siempre para ",
+            "dá permiso siempre para ",
+            "recuerda que puedes ",
+            "recuerda que podés ",
+            "recuerda el permiso para ",
+            "recuerda el permiso de ",
+            "recuerda permiso para ",
         )
 
         for prefix in grant_prefixes:
@@ -1261,6 +1272,15 @@ class ILUCore:
                     return None
 
                 capability = target.split()[-1].strip(".,;:").lower()
+
+                # "autoriza X" concede para UNA acción (menor privilegio).
+                # "autoriza siempre X" / "recuerda que puedes X" emiten un
+                # permiso RECORDADO (indefinido pero revocable), de modo
+                # que I.L.U. pueda volver a usarlo sin re-preguntar.
+                remembered = (
+                    "siempre" in lowered
+                    or "recuerda" in lowered
+                )
 
                 # Solo capacidades de ejecución; jamás autoridad,
                 # modificación de política ni autoconcesión.
@@ -1277,8 +1297,17 @@ class ILUCore:
                     grant = self.authority.grant(
                         capability=capability,
                         actor=self.settings.owner_id,
-                        reason="solicitado por owner por lenguaje natural",
-                        origin="nl_owner_command",
+                        reason=(
+                            "recordado por owner por lenguaje natural"
+                            if remembered
+                            else "solicitado por owner por lenguaje natural"
+                        ),
+                        origin=(
+                            "nl_owner_command_remembered"
+                            if remembered
+                            else "nl_owner_command"
+                        ),
+                        indefinite=remembered,
                     )
                 except PermissionError:
                     return self._authority_reply(
@@ -1304,12 +1333,21 @@ class ILUCore:
 
                 return self._authority_reply(
                     message,
-                    f"Permiso otorgado: '{capability}' (ID {grant.key}).",
+                    (
+                        f"Permiso recordado: '{capability}' (ID {grant.key}). "
+                        "Puedo usarlo sin volver a preguntar; revócalo "
+                        "cuando quieras."
+                        if remembered
+                        else f"Permiso otorgado: '{capability}' "
+                        f"(ID {grant.key})."
+                    ),
                     "permission_granted",
                     grant={
                         "grant_id": grant.key,
                         "capability": grant.capability,
                         "level": grant.level,
+                        "scope_type": grant.scope_type,
+                        "indefinite": grant.indefinite,
                         "expires_at": grant.expires_at,
                     },
                 )

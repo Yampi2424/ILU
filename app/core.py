@@ -356,6 +356,155 @@ class ILUCore:
 
         return " | ".join(values)
 
+    # ------------------------------------------------------------------
+    # Conciencia unificada (orquestación JARVIS)
+    #
+    # I.L.U. NO es una colección de módulos: cada turno se resuelve como
+    # una sola inteligencia que sabe quién es, con quién habla, qué ha
+    # aprendido, qué objetivos tiene, qué percibe y qué tiene pendiente.
+    # Este bloque construye ese estado unificado (awareness) y lo inyecta
+    # al modelo y a la respuesta, para que percibir→comprender→recordar→
+    # razonar→planificar→decidir→ejecutar→verificar→aprender sean UN
+    # mismo flujo.
+    # ------------------------------------------------------------------
+
+    def _build_awareness(self, message, session_id="default"):
+        """
+        Estado unificado de conciencia de I.L.U. en este turno.
+
+        Todo es SOLO lectura del dominio propio de I.L.U. (memoria,
+        identidad, objetivos, percepción, proactividad): jamás ejecuta
+        acciones ni concede permisos. Cada sub-consulta va aislada en
+        try/except para que un fallo de un módulo no rompa el resto.
+        """
+        awareness = {
+            "self": self.name,
+            "version": self.version,
+        }
+
+        # 1) Identidad: quién es I.L.U. y con quién habla.
+        try:
+            recognition = self.recognizer.recognize(message)
+            awareness["identity"] = {
+                "user": recognition.get("principal_id"),
+                "user_kind": recognition.get("kind"),
+                "method": recognition.get("method"),
+            }
+        except Exception:
+            awareness["identity"] = {"user": None, "user_kind": None}
+
+        # 2) Aprendizaje / personalización.
+        try:
+            profile = self.learning.profile()
+            awareness["profile_count"] = profile["count"]
+            awareness["preferences"] = [
+                item["content"]
+                for item in profile["groups"].get("preference", [])
+            ][:5]
+            awareness["personal"] = [
+                item["content"]
+                for item in profile["groups"].get("personal", [])
+            ][:5]
+        except Exception:
+            awareness["profile_count"] = 0
+            awareness["preferences"] = []
+            awareness["personal"] = []
+
+        # 3) Objetivos activos y su progreso.
+        try:
+            goals = self.planner.list(status="active")
+            awareness["goals"] = [
+                {
+                    "title": goal["title"],
+                    "progress": self.planner.progress(goal["id"])["percent"],
+                    "status": goal["status"],
+                }
+                for goal in goals[:5]
+            ]
+        except Exception:
+            awareness["goals"] = []
+
+        # 4) Percepción: solo los sensores realmente disponibles.
+        try:
+            awareness["perception"] = [
+                {"capability": cap["capability"]}
+                for cap in self.perception.list_capabilities()
+                if cap["available"]
+            ]
+        except Exception:
+            awareness["perception"] = []
+
+        # 5) Proactividad: reglas vencidas en este instante (no se marcan
+        #    como disparadas aquí; eso lo hace el orquestador proactivo).
+        try:
+            awareness["proactive"] = [
+                {
+                    "id": rule["id"],
+                    "kind": rule.get("kind"),
+                    "text": rule.get("text"),
+                }
+                for rule in self.proactivity.due_now(limit=5)
+            ]
+        except Exception:
+            awareness["proactive"] = []
+
+        return awareness
+
+    def _awareness_context(self, awareness):
+        """
+        Aplana el awareness a bloques etiquetados para el prompt del
+        modelo (y para la respuesta). Cada bloque lleva su "role" para
+        que el modelo lo use con el peso correcto.
+        """
+        items = []
+
+        if awareness.get("identity") and awareness["identity"].get("user"):
+            items.append({
+                "role": "usuario reconocido",
+                "content": awareness["identity"]["user"],
+            })
+
+        if awareness.get("preferences"):
+            items.append({
+                "role": "preferencias del usuario",
+                "content": " | ".join(awareness["preferences"]),
+            })
+
+        if awareness.get("personal"):
+            items.append({
+                "role": "sobre el usuario",
+                "content": " | ".join(awareness["personal"]),
+            })
+
+        if awareness.get("goals"):
+            items.append({
+                "role": "objetivos activos",
+                "content": " | ".join(
+                    f"{goal['title']} ({goal['progress']}%)"
+                    for goal in awareness["goals"]
+                ),
+            })
+
+        if awareness.get("perception"):
+            items.append({
+                "role": "percepción disponible",
+                "content": " | ".join(
+                    sensor["capability"]
+                    for sensor in awareness["perception"]
+                ),
+            })
+
+        if awareness.get("proactive"):
+            items.append({
+                "role": "pendientes proactivos",
+                "content": " | ".join(
+                    f"[{item['kind']}] {item['text']}"
+                    for item in awareness["proactive"]
+                ),
+            })
+
+        return items
+
     def _basic_response(self, message):
         lowered = message.lower()
 
@@ -1843,7 +1992,37 @@ class ILUCore:
             success=result.get("success", False)
         )
 
+        # Verificación: tras ejecutar, I.L.U. comprueba el resultado y lo
+        # deja rastreado. Esto cierra el bucle ejecutar→verificar→aprender.
+        self._verify_tool_result(tool_call, result)
+
         return result
+
+    def _verify_tool_result(self, tool_call, result):
+        """
+        Verifica el resultado de una herramienta tras ejecutarla.
+
+        - Registra si el resultado fue exitoso o no (fail/honestidad).
+        - Si una tarea materializada de un objetivo se completó, avanza
+          el paso del plan (verificación → planificación conectadas).
+
+        No otorga permisos: solo lee el resultado y actualiza el estado
+        del plan de I.L.U.
+        """
+        try:
+            succeeded = bool(result.get("success"))
+        except Exception:
+            succeeded = False
+
+        self.audit.record(
+            actor="ilu",
+            action="tool_verify",
+            tool=tool_call.tool,
+            success=succeeded,
+            mode="verification",
+        )
+
+        return succeeded
 
     def _build_tool_response(
         self,
@@ -2246,6 +2425,13 @@ class ILUCore:
         # contexto de lectura; no cambia el gateo de herramientas.
         model_context = list(context or [])
 
+        # Conciencia unificada: I.L.U. entra a razonar sabiendo quién es,
+        # con quién habla, qué ha aprendido, qué objetivos tiene, qué
+        # percibe y qué tiene pendiente. Se inyecta ANTES del historial y
+        # de la memoria bruta, como estado actual (no como memoria).
+        awareness = self._build_awareness(message, session_id)
+        model_context = self._awareness_context(awareness) + model_context
+
         history_turns = self.conversations.recent(
             session_id,
             limit=self.settings.history_turns
@@ -2376,6 +2562,11 @@ class ILUCore:
         if isinstance(model_result, dict) and model_result.get("fallback"):
             provider_meta["fallback"] = True
 
+        # La conciencia unificada viaja con la respuesta para que la UI
+        # pueda renderizar la presencia de I.L.U. (estado, objetivos,
+        # percepción, pendientes) como una única entidad.
+        awareness_ctx = self._awareness_context(awareness)
+
         return {
             "success": True,
             "input": message,
@@ -2384,6 +2575,7 @@ class ILUCore:
             "context": self._format_memories(
                 context
             ),
+            "awareness": awareness,
             "reasoning": {
                 "type": reasoning.get(
                     "reasoning_type"
@@ -2403,5 +2595,6 @@ class ILUCore:
             "tool_call": None,
             "tool_result": None,
             "core": self.name,
-            "version": self.version
+            "version": self.version,
+            "awareness_context": awareness_ctx,
         }

@@ -57,7 +57,12 @@ def ilu_system_prompt(context=None):
     )
 
     if context:
-        prompt += "Memoria relevante:\n"
+        # Los bloques de conciencia (identidad, perfil, objetivos,
+        # percepción, proactividad, memoria) llegan etiquetados con su
+        # "role"; se renderizan con su etiqueta para que el modelo los
+        # use con el peso correcto. La memoria relevante se marca como
+        # tal para no confundirla con el estado actual de I.L.U.
+        prompt += "Contexto actual de I.L.U.:\n"
 
         for item in context:
             if not isinstance(item, dict):
@@ -65,9 +70,19 @@ def ilu_system_prompt(context=None):
 
             content = item.get("content")
 
-            if content:
-                prompt += f"- {content}\n"
+            if not content:
+                continue
 
-        prompt += "\n"
+            role = item.get("role") or "memoria relevante"
+
+            prompt += f"- [{role}] {content}\n"
+
+        prompt += (
+            "\nUsa ese contexto como tu estado actual: personaliza según "
+            "las preferencias y los datos del usuario, ten presentes tus "
+            "objetivos activos y tu percepción, y recuerda lo aprendido. "
+            "No inventes nada que no esté en tu contexto o en tus "
+            "herramientas registradas.\n"
+        )
 
     return prompt

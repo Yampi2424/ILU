@@ -230,6 +230,54 @@ def _query_params(path):
     }
 
 
+def _int_or(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _read_notifications(limit=20):
+    """
+    Lee las notificaciones locales de I.L.U. (archivo JSONL escrito por la
+    tool `notify` y por el hilo de proactividad en vivo). Devuelve las
+    `limit` más recientes, de más nueva a más antigua.
+    """
+    raw = os.environ.get(
+        "ILU_NOTIFICATIONS_PATH",
+        "memory/notifications.jsonl"
+    )
+
+    path = os.path.expanduser(raw)
+
+    if not os.path.exists(path):
+        return []
+
+    entries = []
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+
+                if not line:
+                    continue
+
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if isinstance(entry, dict):
+                    entries.append(entry)
+    except OSError:
+        return []
+
+    entries.sort(key=lambda e: e.get("ts", ""), reverse=True)
+
+    return entries[:limit]
+
+
 class ILUHandler(BaseHTTPRequestHandler):
 
     def send_json(self, status, data):
@@ -546,6 +594,21 @@ class ILUHandler(BaseHTTPRequestHandler):
             # JARVIS Evolution: catálogo de integraciones con dispositivos.
             self.send_json(200, {
                 "capabilities": core.integrations.list_capabilities(),
+            })
+
+        elif self._path() == "/state":
+            # Conciencia unificada: estado de I.L.U. como una sola
+            # inteligencia (identidad, aprendizaje, objetivos, percepción,
+            # proactividad) para que la UI renderice su presencia.
+            self.send_json(200, core._build_awareness(""))
+
+        elif self._path() == "/notifications":
+            # Notificaciones locales de I.L.U. (tool notify + proactividad
+            # en vivo). La UI las lee para mostrar avisos del sistema.
+            limit = _int_or(query.get("limit"), 20)
+
+            self.send_json(200, {
+                "notifications": _read_notifications(limit),
             })
 
         else:
@@ -970,6 +1033,23 @@ class ILUHandler(BaseHTTPRequestHandler):
                     state
                 )
 
+                # Verificación → planificación conectadas: si la tarea se
+                # completó y era un paso materializado de un objetivo,
+                # se avanza el plan (el objetivo se auto-completa si era
+                # el último paso). I.L.U. no otorga permisos: solo cierra
+                # el bucle ejecutar→verificar→aprender.
+                if (
+                    state == "completed"
+                    and updated is not None
+                    and hasattr(core, "planner")
+                ):
+                    try:
+                        core.planner.advance_from_task(task_id)
+                    except Exception:
+                        # Avanzar el plan es best-effort: un fallo aquí no
+                        # debe romper la respuesta de la tarea.
+                        pass
+
                 self.send_json(200, {
                     "success": True,
                     "task": updated
@@ -1035,6 +1115,86 @@ def register_background_task(key, fn):
     _REGISTERED_TASKS[key] = fn
 
 
+# ----------------------------------------------------------------------
+# Proactividad EN VIVO (orquestación C)
+#
+# I.L.U. no espera a que le hablen para ofrecer su ayuda: un hilo
+# del servidor revisa las reglas proactivas vencidas y las dispara.
+# La regla de oro se mantiene: la proactividad NUNCA ejecuta por sí
+# sola. Depende de la autonomía y de los grants activos; si no hay
+# autoridad para actuar, solo publica una SUGERENCIA/aviso local.
+# ----------------------------------------------------------------------
+
+
+def _fire_proactive_rule(rule):
+    """Dispara una regla vencida con seguridad: actúa o solo sugiere."""
+    from tools import notify as notify_tool
+
+    autonomy = settings.autonomy_level
+    capability = rule.get("capability")
+
+    has_grant = False
+
+    if capability:
+        try:
+            # ¿I.L.U. (actor="ilu") tiene un grant activo que cubra la
+            # capacidad? has_valid_for es SOLO comprobación: no consume
+            # permisos de uso único.
+            has_grant = core.grant_store.has_valid_for(
+                capability,
+                actor="ilu",
+            )
+        except Exception:
+            has_grant = False
+
+    try:
+        fired = core.proactivity.fire(
+            rule["id"],
+            autonomy=autonomy,
+            has_grant=has_grant,
+        )
+    except Exception:
+        return
+
+    if fired is None or fired.get("action") == "skip":
+        return
+
+    action = fired.get("action")
+    text = fired.get("text", "")
+
+    if action == "act" and capability:
+        # Con grant y autonomía suficiente, I.L.U. encola la ejecución
+        # de la integración gateada (que vuelve a exigir autorización).
+        try:
+            result = core.integrations.execute(capability)
+            message = f"[proactivo·ejecutado] {text}"
+            if not result.get("success"):
+                message += f" ({result.get('error', 'error')})"
+        except Exception:
+            message = f"[proactivo] {text}"
+    else:
+        # Sin autoridad, SOLO se sugiere/avisa (nunca se actúa).
+        message = f"[proactivo·sugerencia] {text}"
+
+    notify_tool.notify(
+        message=message,
+        level="info",
+    )
+
+
+def _proactivity_loop(interval=30):
+    """Revisa periódicamente las reglas proactivas vencidas."""
+    while True:
+        try:
+            for rule in core.proactivity.due_now(limit=10):
+                _fire_proactive_rule(rule)
+        except Exception:
+            # Un fallo en el ciclo no debe tumbar el hilo ni el servidor.
+            pass
+
+        time.sleep(interval)
+
+
 if __name__ == "__main__":
     port = int(
         os.environ.get("PORT", "8000")
@@ -1044,6 +1204,14 @@ if __name__ == "__main__":
         ("0.0.0.0", port),
         ILUHandler
     )
+
+    # Hilo de proactividad en vivo (daemon: no bloquea el cierre).
+    proactivity_thread = threading.Thread(
+        target=_proactivity_loop,
+        daemon=True,
+        name="ilu-proactivity",
+    )
+    proactivity_thread.start()
 
     print(
         f"I.L.U. iniciado en el puerto {port} "

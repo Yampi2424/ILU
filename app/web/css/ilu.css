@@ -263,6 +263,16 @@ html, body {
   color: var(--ilu-error);
 }
 
+.ilu-presence-details {
+  text-align: center;
+  font-size: 11px;
+  color: var(--ilu-text-secondary);
+  opacity: 0.85;
+  margin-top: 2px;
+  min-height: 14px;
+  flex-shrink: 0;
+}
+
 /* === COLUMNA DEL CHAT ============================================= */
 
 .chat-column {

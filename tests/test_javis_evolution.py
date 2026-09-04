@@ -114,6 +114,54 @@ class TestGoalPlanner:
         assert planner.remove(goal["id"]) is True
         assert planner.get(goal["id"]) is None
 
+    def test_advance_from_task_marks_step_completed(self, tmp_path):
+        from tasks.manager import TaskManager
+
+        tasks = TaskManager(path=str(tmp_path / "tasks.json"))
+        planner = GoalPlanner(
+            path=str(tmp_path / "goals.jsonl"),
+            task_manager=tasks,
+        )
+        goal = planner.create("publicar informe", steps=["a", "b"])
+
+        step_a = goal["steps"][0]
+        task = planner.materialize_step(goal["id"], step_a["id"])
+
+        affected = planner.advance_from_task(task["id"])
+
+        assert affected[0]["step_status"] == "completed"
+        assert planner.progress(goal["id"])["percent"] == 50
+
+    def test_advance_from_task_completes_goal_when_last(self, tmp_path):
+        from tasks.manager import TaskManager
+
+        tasks = TaskManager(path=str(tmp_path / "tasks.json"))
+        planner = GoalPlanner(
+            path=str(tmp_path / "goals.jsonl"),
+            task_manager=tasks,
+        )
+        goal = planner.create("publicar informe", steps=["a", "b"])
+
+        for step in goal["steps"]:
+            task = planner.materialize_step(goal["id"], step["id"])
+            planner.advance_from_task(task["id"])
+
+        assert planner.get(goal["id"])["status"] == "completed"
+        assert planner.progress(goal["id"])["percent"] == 100
+
+    def test_advance_from_task_ignores_unlinked(self, tmp_path):
+        from tasks.manager import TaskManager
+
+        tasks = TaskManager(path=str(tmp_path / "tasks.json"))
+        planner = GoalPlanner(
+            path=str(tmp_path / "goals.jsonl"),
+            task_manager=tasks,
+        )
+        planner.create("publicar informe", steps=["a"])
+        unrelated = tasks.create(title="tarea suelta")
+
+        assert planner.advance_from_task(unrelated["id"]) == []
+
 
 # ------------------------------------------------------------------
 # LearningEngine
@@ -481,6 +529,53 @@ class TestILUCoreJavisCommands:
 
 
 # ------------------------------------------------------------------
+# Conciencia unificada (orquestación JARVIS)
+# ------------------------------------------------------------------
+
+class TestAwarenessIntegration:
+
+    def test_awareness_includes_identity(self, core_env):
+        awareness = core_env._build_awareness("jefe, hola")
+
+        assert awareness["self"] == core_env.name
+        assert awareness["identity"]["user"] == "owner"
+        assert awareness["identity"]["user_kind"] == "owner"
+
+    def test_awareness_reflects_learning(self, core_env):
+        core_env.learning.learn("me gusta el café")
+        awareness = core_env._build_awareness("hola")
+
+        assert "me gusta el café" in awareness["preferences"]
+
+    def test_awareness_reflects_goals(self, core_env):
+        core_env.planner.create("organizar la mudanza")
+        awareness = core_env._build_awareness("hola")
+
+        assert any("organizar la mudanza" in g["title"]
+                   for g in awareness["goals"])
+
+    def test_awareness_includes_real_perception(self, core_env):
+        awareness = core_env._build_awareness("hola")
+
+        capabilities = {s["capability"] for s in awareness["perception"]}
+        # system_state y filesystem son reales y locales.
+        assert "system_state" in capabilities
+
+    def test_awareness_context_labeled_blocks(self, core_env):
+        core_env.learning.learn("me gusta el café")
+        awareness = core_env._build_awareness("hola")
+        blocks = core_env._awareness_context(awareness)
+
+        roles = {b["role"] for b in blocks}
+        assert "preferencias del usuario" in roles
+
+    def test_awareness_injected_into_response(self, core_env):
+        # La respuesta del modelo transporta la conciencia unificada.
+        result = core_env.process("me gusta el café")
+        assert "awareness" in result
+
+
+# ------------------------------------------------------------------
 # Rutas HTTP
 # ------------------------------------------------------------------
 
@@ -581,3 +676,16 @@ class TestJavisHTTPRoutes:
     def test_healthz_still_works(self, evo_server):
         status, _ = _get("/healthz")
         assert status == 200
+
+    def test_state_route(self, evo_server):
+        # Conciencia unificada de I.L.U. (presencia) por HTTP.
+        status, data = _get("/state")
+        assert status == 200
+        assert "identity" in data
+        assert "goals" in data
+        assert "perception" in data
+
+    def test_notifications_route(self, evo_server):
+        status, data = _get("/notifications")
+        assert status == 200
+        assert "notifications" in data

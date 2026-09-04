@@ -105,6 +105,12 @@ window.ILUApi = (function () {
     // --- Estado ---
     healthz: function () { return _get('/healthz'); },
     about: function () { return _get('/about'); },
+    state: function () { return _get('/state'); },
+    notifications: function (limit) {
+      let path = '/notifications';
+      if (limit) path += '?limit=' + encodeURIComponent(String(limit));
+      return _get(path);
+    },
 
     // --- Conversación ---
     ask: function (message, sessionId) {

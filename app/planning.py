@@ -322,6 +322,55 @@ class GoalPlanner:
 
         return task
 
+    def advance_from_task(self, task_id, status="completed"):
+        """
+        Conecta el ejecutor de tareas con el planificador: cuando una
+        tarea materializada (paso de un objetivo) termina, se avanza el
+        paso correspondiente.
+
+        Busca en todos los objetivos el paso con `task_id == task_id` y
+        lo marca con `status`. Si el paso era el último pendiente, el
+        objetivo pasa a "completed" automáticamente (vía set_step_status).
+
+        Devuelve una lista de dicts {goal_id, step_id, task_id,
+        goal_status, step_status} con los pasos afectados, o [] si no hay
+        ninguna tarea ligada a un plan.
+        """
+        affected = []
+
+        # set_step_status usa su propio RLock y auto-completa el objetivo
+        # si este era el último paso, así que delegamos en él.
+        for goal in self.goals.values():
+            for step in goal.get("steps", []):
+                if step.get("task_id") != task_id:
+                    continue
+
+                if status == "completed":
+                    self.set_step_status(
+                        goal["id"], step["id"], "completed"
+                    )
+                else:
+                    self.set_step_status(
+                        goal["id"], step["id"], status
+                    )
+
+                goal = self.get(goal["id"])
+
+                affected.append({
+                    "goal_id": goal["id"],
+                    "step_id": step["id"],
+                    "task_id": task_id,
+                    "goal_status": goal["status"],
+                    "step_status": goal["steps"][
+                        next(
+                            i for i, s in enumerate(goal["steps"])
+                            if s["id"] == step["id"]
+                        )
+                    ]["status"],
+                })
+
+        return affected
+
     def remove(self, goal_id):
         with self._lock:
             if goal_id not in self.goals:

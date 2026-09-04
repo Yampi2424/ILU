@@ -27,6 +27,7 @@
     _bindEvents();
     _loadSecurityState();
     _pollAuthorizationRequests();
+    _pollPresence();
   }
 
   /**
@@ -188,6 +189,72 @@
         ILUCore.set(ILUCore.STATES.AUTHORIZATION);
       }
     }, 15000);
+  }
+
+  /**
+   * Presencia unificada: I.L.U. se siente como una sola inteligencia.
+   *
+   * Consulta periódicamente /state (conciencia) y /notifications
+   * (avisos + proactividad en vivo). Con /state actualiza la etiqueta de
+   * presencia bajo el plasma (objetivos, pendientes, percepción). Con
+   * /notifications muestra los avisos nuevos como mensajes del asistente,
+   * para que la proactividad de I.L.U. aparezca en la conversación.
+   */
+  var _lastNotifTs = '';
+  var _presenceRendered = false;
+
+  function _renderPresenceDetails(awareness) {
+    var el = document.getElementById('presenceDetails');
+    if (!el) return;
+
+    var parts = [];
+
+    if (awareness.goals && awareness.goals.length > 0) {
+      parts.push(
+        awareness.goals.length + ' objetivo' +
+        (awareness.goals.length > 1 ? 's' : '')
+      );
+    }
+
+    if (awareness.proactive && awareness.proactive.length > 0) {
+      parts.push(
+        awareness.proactive.length + ' pendiente' +
+        (awareness.proactive.length > 1 ? 's' : '')
+      );
+    }
+
+    if (awareness.preferences && awareness.preferences.length > 0) {
+      parts.push('te conozco');
+    }
+
+    el.textContent = parts.length ? parts.join(' · ') : '';
+  }
+
+  function _pollPresence() {
+    setInterval(async function () {
+      // 1) Conciencia unificada → etiqueta de presencia.
+      try {
+        var state = await ILUApi.state();
+        if (state && !state.error) _renderPresenceDetails(state);
+      } catch (_) { /* best-effort */ }
+
+      // 2) Notificaciones / proactividad → mensajes del asistente.
+      try {
+        var data = await ILUApi.notifications();
+        var notifs = (data && data.notifications) || [];
+
+        for (var i = notifs.length - 1; i >= 0; i--) {
+          var n = notifs[i];
+          if (!n.ts || !n.message) continue;
+          if (_lastNotifTs && n.ts <= _lastNotifTs) continue;
+          ILUUI.appendMessage('assistant', n.message, 'I.L.U. · aviso');
+        }
+
+        if (notifs.length > 0) {
+          _lastNotifTs = notifs[0].ts || _lastNotifTs;
+        }
+      } catch (_) { /* best-effort */ }
+    }, 12000);
   }
 
   // --- Conversación (texto) ----------------------------------------

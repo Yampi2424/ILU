@@ -146,6 +146,11 @@ class ILUCore:
         # consultan el grant_store real para autorizar.
         self.recognizer.principals = self.principals
         self.integrations.grant_store = self.grant_store
+        # Bloque 13: las tools de ejecución real (run_command / open_app /
+        # media_control) se registran DESPUÉS de conectar integrations con
+        # el grant_store: sus handlers delegan con pre_authorized=True.
+        # create_tool_manager() (5 tools) queda intacto.
+        self._register_world_tools()
         self.emergency = EmergencyRegistry(
             policy=self.policy,
             path=self.settings.emergency_path,
@@ -810,6 +815,27 @@ class ILUCore:
         ):
             return "notify"
 
+        # Bloque 13: ejecución real sobre el mundo. Estas frases requieren
+        # grant (permission="ask"); el despacho directo reduce latencia,
+        # pero la compuerta decide igual que en el camino del modelo.
+        if (
+            self.tools.has_tool("run_command")
+            and self._extract_run_command(message)
+        ):
+            return "run_command"
+
+        if (
+            self.tools.has_tool("open_app")
+            and self._extract_open_app(message)
+        ):
+            return "open_app"
+
+        if (
+            self.tools.has_tool("media_control")
+            and self._extract_media_action(message)
+        ):
+            return "media_control"
+
         return None
 
     @staticmethod
@@ -881,6 +907,224 @@ class ILUCore:
 
         return ""
 
+    def _register_world_tools(self):
+        """
+        Bloque 13: registra las herramientas de ejecución real sobre el
+        mundo (run_command / open_app / media_control).
+
+        Son permission="ask": la compuerta SecurityGate las decide con
+        grants (manual → autorización humana; assisted/autonomous → grant
+        activo). Sus handlers delegan en la integración YA decidida
+        (pre_authorized=True) para que un grant de un solo uso no se
+        consuma dos veces (una en la compuerta y otra en la integración).
+        create_tool_manager() (5 tools) y su test quedan intactos.
+        """
+        integrations = self.integrations
+
+        self.tools.register(
+            name="run_command",
+            description=(
+                "Ejecutar un comando de la lista blanca del sistema "
+                "(shell=False, timeout y salida acotada)."
+            ),
+            handler=lambda integrations=integrations, **kwargs: (
+                integrations.execute(
+                    "run_command", pre_authorized=True, **kwargs
+                )
+            ),
+            permission="ask",
+            schema={
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": (
+                            "Línea de comando a ejecutar (lista blanca)."
+                        )
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": (
+                            "Máximo de segundos de ejecución."
+                        )
+                    }
+                },
+                "required": ["command"]
+            }
+        )
+
+        self.tools.register(
+            name="open_app",
+            description=(
+                "Abrir una aplicación de la lista blanca del sistema."
+            ),
+            handler=lambda integrations=integrations, **kwargs: (
+                integrations.execute(
+                    "open_app", pre_authorized=True, **kwargs
+                )
+            ),
+            permission="ask",
+            schema={
+                "type": "object",
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": (
+                            "Nombre de la app a abrir (lista blanca)."
+                        )
+                    }
+                },
+                "required": ["app"]
+            }
+        )
+
+        self.tools.register(
+            name="media_control",
+            description=(
+                "Controlar la reproducción multimedia del sistema "
+                "(reproducir, pausar, siguiente, anterior, volumen, mute)."
+            ),
+            handler=lambda integrations=integrations, **kwargs: (
+                integrations.execute(
+                    "media_control", pre_authorized=True, **kwargs
+                )
+            ),
+            permission="ask",
+            schema={
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "Acción canónica de media: play, pause, "
+                            "play-pause, next, previous, volume-up, "
+                            "volume-down, mute, unmute."
+                        ),
+                        "enum": [
+                            "play", "pause", "play-pause",
+                            "next", "previous",
+                            "volume-up", "volume-down",
+                            "mute", "unmute"
+                        ]
+                    }
+                },
+                "required": ["action"]
+            }
+        )
+
+    def _extract_run_command(self, message):
+        """Extrae el comando de 'ejecutá/ejecuta/corré/corre <comando>'."""
+        lowered = message.lower().strip()
+
+        markers = ("ejecutá ", "ejecuta ", "corré ", "corre ")
+
+        for marker in markers:
+            if not lowered.startswith(marker):
+                continue
+
+            command = message[len(marker):].strip(":.,; ")
+
+            # Tolerar 'ejecutá el comando ls', 'ejecutá un comando ls'.
+            for prefix in (
+                "el comando ", "un comando ", "este comando ",
+                "el comando:", "un comando:",
+            ):
+                if command.lower().startswith(prefix):
+                    command = command[len(prefix):].strip()
+                    break
+
+            return command
+
+        return ""
+
+    def _extract_open_app(self, message):
+        """
+        Extrae la app de 'abrí/abre <app>'.
+
+        NUNCA alcanza 'abre el archivo' (se resuelve como read_file ANTES,
+        en _identify_tool). Solo despacha si la app está en la lista blanca
+        de CommandPolicy: si no, devuelve "" y la frase cae al modelo.
+        """
+        lowered = message.lower().strip()
+
+        markers = ("abrí ", "abre ")
+
+        for marker in markers:
+            if not lowered.startswith(marker):
+                continue
+
+            app = message[len(marker):].strip(":.,; ")
+
+            # Tolerar 'abrí la aplicación X' / 'abrí el programa X'.
+            for prefix in (
+                "la aplicacion ", "la aplicación ", "la app ",
+                "el programa ",
+            ):
+                if app.lower().startswith(prefix):
+                    app = app[len(prefix):].strip()
+                    break
+
+            if not app:
+                return ""
+
+            if self.integrations.command_policy.app_allowed(app):
+                return app
+
+            return ""
+
+        return ""
+
+    def _extract_media_action(self, message):
+        """Extrae la acción canónica de media de frases de control."""
+        lowered = message.lower().strip()
+
+        mapping = (
+            # Las más específicas primero, para no comerse a las generales.
+            ("pausá la música", "pause"),
+            ("pausa la música", "pause"),
+            ("pausá la canción", "pause"),
+            ("pausa la canción", "pause"),
+            ("pausá", "pause"),
+            ("pausa", "pause"),
+            ("reproducí la música", "play"),
+            ("reproduce la música", "play"),
+            ("reproducí la canción", "play"),
+            ("reproduce la canción", "play"),
+            ("seguí reproduciendo", "play"),
+            ("seguí con la reproducción", "play"),
+            ("reproducí", "play"),
+            ("reproduce", "play"),
+            ("siguiente canción", "next"),
+            ("canción siguiente", "next"),
+            ("pasa a la siguiente", "next"),
+            ("adelantá la canción", "next"),
+            ("adelanta la canción", "next"),
+            ("adelantá", "next"),
+            ("adelanta", "next"),
+            ("canción anterior", "previous"),
+            ("anterior canción", "previous"),
+            ("volvé a la anterior", "previous"),
+            ("subí el volumen un poco", "volume-up"),
+            ("subí el volumen", "volume-up"),
+            ("subí el volúmen", "volume-up"),
+            ("sube el volumen", "volume-up"),
+            ("bajá el volumen un poco", "volume-down"),
+            ("bajá el volumen", "volume-down"),
+            ("bajá el volúmen", "volume-down"),
+            ("baja el volumen", "volume-down"),
+            ("silenciá", "mute"),
+            ("silencia", "mute"),
+            ("ponelo en mute", "mute"),
+            ("activá el sonido", "unmute"),
+            ("activa el sonido", "unmute"),
+        )
+
+        for phrase, action in mapping:
+            if phrase in lowered:
+                return action
+
+        return ""
+
     def _tool_arguments(self, tool_name, message):
         """Argumentos deterministas para una herramienta directa."""
         if tool_name == "web_search":
@@ -891,6 +1135,15 @@ class ILUCore:
 
         if tool_name == "notify":
             return {"message": self._extract_notify_message(message)}
+
+        if tool_name == "run_command":
+            return {"command": self._extract_run_command(message)}
+
+        if tool_name == "open_app":
+            return {"app": self._extract_open_app(message)}
+
+        if tool_name == "media_control":
+            return {"action": self._extract_media_action(message)}
 
         return {}
 
@@ -917,6 +1170,9 @@ class ILUCore:
             "web_search": "query",
             "read_file": "path",
             "notify": "message",
+            "run_command": "command",
+            "open_app": "app",
+            "media_control": "action",
         }.get(tool_name)
 
         if required_argument:
@@ -2172,9 +2428,40 @@ class ILUCore:
                             f" Solicitud abierta: {request_id}."
                         )
             else:
-                response = (
-                    "I.L.U. no pudo ejecutar "
-                    "la herramienta."
+                # Bloque 13: rechazos honestos y legibles del mundo.
+                world_errors = {
+                    "command_not_allowlisted": (
+                        "Ese comando no está en la lista blanca de I.L.U."
+                    ),
+                    "command_token_rejected": (
+                        "Ese comando usa operadores de shell vetados "
+                        "(pipes, redirección o sustitución)."
+                    ),
+                    "command_required": (
+                        "No me indicaste qué comando ejecutar."
+                    ),
+                    "command_policy_unavailable": (
+                        "La política de comandos no está disponible; no "
+                        "ejecuto nada hasta que se restablezca."
+                    ),
+                    "app_not_allowed": (
+                        "Esa aplicación no está en la lista blanca."
+                    ),
+                    "app_not_found": (
+                        "No encontré esa aplicación instalada en el sistema."
+                    ),
+                    "app_launch_failed": "No pude abrir la aplicación.",
+                    "media_action_invalid": (
+                        "Esa acción de multimedia no es válida para I.L.U."
+                    ),
+                    "media_backend_unavailable": (
+                        "El backend de audio (playerctl) no está "
+                        "disponible en este sistema."
+                    ),
+                }
+                response = world_errors.get(
+                    tool_result.get("error"),
+                    "I.L.U. no pudo ejecutar la herramienta.",
                 )
 
             return {
@@ -2214,6 +2501,7 @@ class ILUCore:
             }
 
         result = tool_result.get("result", {})
+        tool_name = tool_call.tool if tool_call else None
 
         if (
             isinstance(result, dict)
@@ -2222,6 +2510,46 @@ class ILUCore:
             response = (
                 "La fecha y hora de tu sistema es: "
                 f"{result['datetime']}"
+            )
+        elif tool_name == "run_command":
+            # Bloque 13: formato humano para ejecución real.
+            exit_code = result.get("exit_code", 0)
+            stdout_text = (result.get("stdout") or "").strip()
+            stderr_text = (result.get("stderr") or "").strip()
+
+            if exit_code != 0:
+                response = (
+                    "El comando terminó con error "
+                    f"(código {exit_code}): "
+                    f"{stderr_text or stdout_text}"
+                )
+            elif stdout_text:
+                response = f"Ejecuté: {stdout_text}"
+            else:
+                response = "Comando ejecutado correctamente."
+
+            if result.get("truncated"):
+                response += " (salida recortada)"
+        elif tool_name == "open_app":
+            response = f"Abrí {result.get('app') or 'la aplicación'}."
+
+            if result.get("pid"):
+                response += f" (PID {result['pid']})"
+        elif tool_name == "media_control":
+            labels = {
+                "play": "Reproducción activada.",
+                "pause": "Reproducción en pausa.",
+                "play-pause": "Reproducción alternada.",
+                "next": "Pasó a la siguiente canción.",
+                "previous": "Volvió a la canción anterior.",
+                "volume-up": "Subí el volumen.",
+                "volume-down": "Bajé el volumen.",
+                "mute": "Sonido silenciado.",
+                "unmute": "Sonido activado.",
+            }
+            response = labels.get(
+                result.get("action"),
+                "Acción de multimedia aplicada.",
             )
         else:
             response = str(result)

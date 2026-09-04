@@ -12,17 +12,32 @@ Regla de seguridad inviolable:
   - En modo manual, cualquier integración devuelve `authorization=ask`
     y abre la solicitud, salvo que ya exista un grant.
 
-Qué hay REAL hoy (inocuo y acotado):
+Qué hay REAL hoy:
   - workspace_write: escribir un archivo DENTRO del workspace.
   - workspace_list:  listar el workspace (solo lectura).
+  - run_command:     ejecutar un comando de la LISTA BLANCA (Bloque 13):
+                     shell=False, timeout y salida acotada.
+  - open_app:        abrir una aplicación de la lista blanca de apps.
+  - media_control:   controlar multimedia vía un backend permitido
+                     (playerctl), con acciones acotadas.
 
 Qué queda PLANIFICADO (arquitectura lista, requeriría permisos OS/red):
-  - media_control, open_app, run_command, device_control: el catálogo
-    declara su capacidad, pero `_run` devuelve "not_implemented" con un
-    motivo claro. Cuando se autorice, solo hay que implementar `_run`.
+  - device_control: el catálogo declara la capacidad, pero `_run`
+    devuelve "not_implemented" con un motivo claro.
+
+Seguridad (Bloque 13): las integraciones del mundo pasan SIEMPRE por
+`execute()`, que exige un grant activo para la capacidad (salvo que la
+compuerta ya haya decidido, vía pre_authorized=True). QUÉ se puede ejecutar
+/ abrir / controlar vive en `security/run_commands.json` (CommandPolicy):
+el grant autoriza la CAPACIDAD, la política decide la LISTA BLANCA. `shell`
+crudo sigue prohibido en policy.json.
 """
 
 import os
+import shutil
+import subprocess
+
+from security.command_policy import CommandPolicy
 
 
 class IntegrationManager:
@@ -46,15 +61,23 @@ class IntegrationManager:
             "read_only": False,
         },
         "media_control": {
-            "description": "Controlar reproducción multimedia (PLANIFICADO)",
+            "description": (
+                "Controlar reproducción multimedia vía el backend permitido "
+                "(playerctl), con acciones acotadas."
+            ),
             "read_only": False,
         },
         "open_app": {
-            "description": "Abrir una aplicación del sistema (PLANIFICADO)",
+            "description": (
+                "Abrir una aplicación de la lista blanca del sistema."
+            ),
             "read_only": False,
         },
         "run_command": {
-            "description": "Ejecutar un comando autorizado (PLANIFICADO)",
+            "description": (
+                "Ejecutar un comando de la lista blanca (shell=False, "
+                "timeout y salida acotada)."
+            ),
             "read_only": False,
         },
         "device_control": {
@@ -74,6 +97,10 @@ class IntegrationManager:
         self.security = security       # SecurityGate (decide)
         self.audit = audit             # AuditLog
         self.grant_store = grant_store # GrantStore (grants activos)
+
+        # Lista blanca del mundo (Bloque 13): qué comandos/apps/acciones de
+        # media están permitidos y los confinamientos (timeout, max output).
+        self.command_policy = CommandPolicy()
 
     # ------------------------------------------------------------------
     # Catálogo
@@ -95,19 +122,33 @@ class IntegrationManager:
 
     @staticmethod
     def _implemented(capability):
-        # Solo las integraciones de workspace están implementadas hoy.
-        return capability in ("workspace_list", "workspace_write")
+        # Integraciones reales: workspace + ejecución gateada (Bloque 13).
+        # device_control sigue PLANIFICADO (requiere permisos OS/red).
+        return capability in (
+            "workspace_list",
+            "workspace_write",
+            "run_command",
+            "open_app",
+            "media_control",
+        )
 
     # ------------------------------------------------------------------
     # Ejecución gateada
     # ------------------------------------------------------------------
 
-    def execute(self, capability, actor="ilu", **kwargs):
+    def execute(self, capability, actor="ilu", pre_authorized=False, **kwargs):
         """
         Ejecuta una integración SOLO con un grant activo.
 
         Devuelve un dict con `success` o con `authorization=ask` si falta
         el permiso. Nunca ejecuta sin autorización.
+
+        pre_authorized=True marca que la compuerta (SecurityGate) YA decidió
+        allow para ESTA llamada (camino del core: las tools run_command /
+        open_app / media_control pasan primero por ella). Así un grant de uso
+        único no se consume DOS veces (una en la compuerta y otra aquí).
+        Los caminos que NO pasan por la compuerta (p. ej. la proactividad)
+        llaman sin pre_authorized y la integración hace su propio check.
         """
         if not self.has_capability(capability):
             return {
@@ -127,7 +168,7 @@ class IntegrationManager:
                 ),
             }
 
-        if not self._authorized(capability, actor):
+        if not pre_authorized and not self._authorized(capability, actor):
             return {
                 "success": False,
                 "error": "authorization_required",
@@ -184,9 +225,159 @@ class IntegrationManager:
             return self._workspace_list()
         if capability == "workspace_write":
             return self._workspace_write(kwargs)
+        if capability == "run_command":
+            return self._run_command(kwargs)
+        if capability == "open_app":
+            return self._open_app(kwargs)
+        if capability == "media_control":
+            return self._media_control(kwargs)
         return {
             "success": False,
             "error": "not_implemented",
+        }
+
+    # ------------------------------------------------------------------
+    # Ejecución real gateada (Bloque 13): run_command / open_app / media
+    # ------------------------------------------------------------------
+
+    def _run_command(self, kwargs):
+        command = kwargs.get("command")
+        timeout = kwargs.get("timeout") or self.command_policy.default_timeout()
+
+        ok, value = self.command_policy.validate_command(command)
+        if not ok:
+            return {
+                "success": False,
+                "error": value,
+                "command": command if isinstance(command, str) else None,
+            }
+
+        try:
+            timeout = max(1, int(timeout))
+        except (TypeError, ValueError):
+            timeout = self.command_policy.default_timeout()
+
+        try:
+            completed = subprocess.run(
+                value,
+                shell=False,
+                capture_output=True,
+                timeout=timeout,
+                text=True,
+            )
+        except subprocess.TimeoutExpired:
+            return {
+                "success": False,
+                "error": "command_timeout",
+                "command": value[0],
+            }
+        except (OSError, ValueError) as error:
+            return {
+                "success": False,
+                "error": "command_execution_failed",
+                "detail": str(error),
+                "command": value[0],
+            }
+
+        limit = self.command_policy.max_output_bytes()
+        stdout = completed.stdout[-limit:] if completed.stdout else ""
+        stderr = completed.stderr[-limit:] if completed.stderr else ""
+
+        truncated = (
+            bool(stdout) and len(completed.stdout) > limit
+        ) or (
+            bool(stderr) and len(completed.stderr) > limit
+        )
+
+        return {
+            "success": True,
+            "command": value[0],
+            "exit_code": completed.returncode,
+            "stdout": stdout,
+            "stderr": stderr,
+            "truncated": truncated,
+        }
+
+    def _open_app(self, kwargs):
+        app = (kwargs.get("app") or "").strip()
+        if not app:
+            return {
+                "success": False,
+                "error": "app_required",
+            }
+        if not self.command_policy.app_allowed(app):
+            return {
+                "success": False,
+                "error": "app_not_allowed",
+                "app": app,
+            }
+        if shutil.which(app) is None:
+            return {
+                "success": False,
+                "error": "app_not_found",
+                "app": app,
+            }
+
+        try:
+            process = subprocess.Popen(
+                [app],
+                shell=False,
+                start_new_session=True,
+            )
+        except (OSError, ValueError) as error:
+            return {
+                "success": False,
+                "error": "app_launch_failed",
+                "detail": str(error),
+                "app": app,
+            }
+
+        pid = getattr(process, "pid", None)
+        return {
+            "success": True,
+            "app": app,
+            "pid": pid,
+        }
+
+    def _media_control(self, kwargs):
+        action = (kwargs.get("action") or "").strip()
+
+        args, backend = self.command_policy.media_args(action)
+        if args is None or backend is None:
+            return {
+                "success": False,
+                "error": "media_action_invalid",
+                "action": action,
+            }
+        if shutil.which(backend) is None:
+            return {
+                "success": False,
+                "error": "media_backend_unavailable",
+                "backend": backend,
+            }
+
+        try:
+            completed = subprocess.run(
+                [backend] + args,
+                shell=False,
+                capture_output=True,
+                timeout=self.command_policy.default_timeout(),
+                text=True,
+            )
+        except (OSError, ValueError) as error:
+            return {
+                "success": False,
+                "error": "media_control_failed",
+                "detail": str(error),
+                "action": action,
+            }
+
+        return {
+            "success": completed.returncode == 0,
+            "action": action,
+            "backend": backend,
+            "exit_code": completed.returncode,
+            "detail": (completed.stderr or "").strip()[:500],
         }
 
     def _workspace_list(self):

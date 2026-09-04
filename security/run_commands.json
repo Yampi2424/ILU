@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "allowlist": [
+    "ls",
+    "pwd",
+    "whoami",
+    "date",
+    "uname",
+    "hostname"
+  ],
+  "apps": [
+    "firefox",
+    "brave",
+    "code",
+    "vlc"
+  ],
+  "media": [
+    "playerctl"
+  ],
+  "deny_substrings": [
+    ";",
+    "&&",
+    "||",
+    "|",
+    ">",
+    "<",
+    "$",
+    "`",
+    ".."
+  ],
+  "default_timeout": 15,
+  "max_output_bytes": 8192
+}

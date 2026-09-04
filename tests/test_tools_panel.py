@@ -251,4 +251,6 @@ def test_tools_exposed_to_model(monkeypatch, tmp_path):
     assert names == {
         "system_time", "web_search",
         "read_file", "notify", "write_file",
+        # Bloque 13: ejecución real gateada (se registran en ILUCore).
+        "run_command", "open_app", "media_control",
     }

@@ -628,3 +628,73 @@ autonomía, registrarse ni activar emergencias (testeado
 - La validación es sintáctica; la semántica de los valores la decide la
   tool al ejecutar.
 - El esquema se emite igual para Ollama y OmniRoute (mismo wire-format).
+
+## Bloque 13 · Ejecución real gateada (run_command / open_app / media_control)
+
+### Qué se construyó
+
+- **Tres integraciones reales sobre el mundo** — hasta aquí, "actuar" era
+  solo escribir archivos dentro del workspace. Ahora I.L.U. puede ejecutar
+  comandos (de una lista blanca), abrir aplicaciones y controlar multimedia,
+  SIEMPRE a través del mismo camino gateado (SecurityGate + grant + auditoría).
+- **Dos diales independientes, ambos fail-closed**:
+  1. **Grant para la capacidad** (`run_command`, `open_app`, `media_control`):
+     emitido por Authority/owner. Sin grant → `authorization=ask` + solicitud
+     abierta.
+  2. **Lista blanca** (`security/run_commands.json`): qué comandos exactos,
+     qué apps, qué acciones de media, y los confinamientos (timeout, max
+     output, metachars vetados). El grant no otorga poder sobre lo que no
+     está en la lista. `shell` crudo SIGUE prohibido en policy.json.
+- **`CommandPolicy`** — carga la política desde disco (commiteado); un
+  archivo ausente/corrupto deja la lista vacía (fail-closed). `shlex.split` +
+  primer token en allowlist + sin metachars en ningún token; ejecución
+  SIEMPRE `shell=False`. Overrides de confinamientos por env
+  (`ILU_WORLD_TIMEOUT` / `ILU_WORLD_MAX_OUTPUT`).
+- **`pre_authorized=True`** — el core despacha las 3 tools con
+  `permission="ask"`; sus handlers delegan en la integración con
+  `pre_authorized=True` para no consumir dos veces un grant de un solo uso.
+- **Despacho por lenguaje natural** (determinista, antes de mirar al LLM):
+  "ejecutá/ejecuta/corré/corre &lt;comando&gt;", "abrí/abre &lt;app&gt;"
+  (NUNCA "abre el archivo…", que sigue siendo `read_file`), "pausá la
+  música", "siguiente canción", "subí/bajá el volumen", "silenciá".
+- **Rechazos honestos y legibles** — fuera de la lista blanca, metachars,
+  app no instalada o backend ausente producen mensajes claros (nunca un
+  fallo mudo ni una ejecución simulada).
+
+### Archivos
+
+- **Nuevos**: `security/command_policy.py`, `security/run_commands.json`,
+  `tests/test_command_policy.py`, `tests/test_integrations_world.py`,
+  `tests/test_core_world_nl.py`
+- **Modificados**: `security/policy.json` y `security/policy.py`
+  (sensitivity de las 3 capacidades; `prohibited` intacto),
+  `config/settings.py` (env-config), `app/integrations.py`
+  (`execute(pre_authorized)` + 3 ejecutores), `app/core.py`
+  (`_register_world_tools`, despacho NL, respuesta humana),
+  `tests/test_tools_panel.py` (8 tools expuestas por ILUCore)
+- **Intactos**: `security/securitygate.py`, `security/authority.py`,
+  `tools/manager.py` (reutilizados tal cual), `device_control` sigue
+  PLANIFICADO.
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest` selectivo + regresivo → **122 passed** (34 nuevos del Bloque 13,
+  88 de seguridad/panel, cero regresiones).
+- Camino de compuerta intacto: sin grant → `authorization=ask` + solicitud;
+  con grant de un solo uso + `pre_authorized=True` el grant no se consume
+  dos veces.
+
+### Limitaciones honestas (se documentan, no se ocultan)
+
+- `run_command` no soporta pipes ni redirección **por diseño** (metachars
+  vetados). Sin sandbox de red/seccomp por comando (PLANIFICADO: bwrap /
+  seccomp) — ejecuta con la cuenta del proceso, dentro del timeout.
+- `open_app`/`media_control` dependen de lo instalado en el sistema
+  (`playerctl`, binarios de apps): fallan explícito, no falso.
+- La lista blanca por defecto es mínima (solo lectura/inspección). Un
+  comando potencialmente destructivo (`rm`, `sudo`, `shutdown`…) solo se
+  habilita si el owner lo agrega deliberadamente a
+  `security/run_commands.json`.
+- El despacho NL directo es determinista y acotado; las frases complejas
+  caen al modelo, que propone las mismas tools gateadas.

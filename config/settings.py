@@ -82,6 +82,28 @@ class ILUSettings:
             "memory/proactivity.jsonl"
         )
 
+        # ---- Bloque 13: ejecución real gateada (run_command / apps / media) ----
+        # Ruta de la lista blanca de comandos/aplicaciones del mundo y los
+        # confinamientos de ejecución (timeout y tamaño máximo de salida).
+        self.run_commands_path = os.environ.get(
+            "ILU_RUN_COMMANDS_PATH",
+            "security/run_commands.json"
+        )
+
+        self.world_timeout = int(
+            os.environ.get(
+                "ILU_WORLD_TIMEOUT",
+                "15"
+            )
+        )
+
+        self.world_max_output = int(
+            os.environ.get(
+                "ILU_WORLD_MAX_OUTPUT",
+                "8192"
+            )
+        )
+
         # ---- Bloque 8: sistema de autoridad / permisos ----
         # Unica variable que I.L.U. necesita conocer del mundo humano:
         # quién es el OWNER (autoridad raíz) en este dispositivo.

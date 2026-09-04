@@ -13,8 +13,9 @@
  *   - Escucha continua con turnos naturales (VAD + reconocimiento).
  *   - Barge-in: si hablas mientras I.L.U. responde, la interrumpe al
  *     instante (se detiene la reproducción) y captura tu nuevo turno.
- *   - Visualización dual reactiva: tu micrófono y la voz de I.L.U.,
- *     alimentando la presencia de plasma.
+ *   - Presencia como centro: el plasma reacciona a la energía de audio
+ *     REAL — del micrófono al escuchar, de la propia voz de I.L.U. al
+ *     responder. No hay barras ni ecualizadores.
  *   - Fallback: si el backend TTS no responde, cae al TTS del navegador
  *     (Web Speech) para no quedarse muda.
  *
@@ -158,7 +159,6 @@ window.ILURealtime = (function () {
 
     _setPlasmaEnergy(0);
     _emit('onModeChange', false);
-    _emit('onVisual', { mic: 0, speak: 0 });
   }
 
   // ==================================================================
@@ -186,26 +186,9 @@ window.ILURealtime = (function () {
     _speakAnalyser.smoothingTimeConstant = 0.6;
     _speakData = new Uint8Array(_speakAnalyser.fftSize);
 
-    // No se conecta el micrófono al destino: solo se analiza (VAD + visual).
-
-    _resizeWaves();
-    window.addEventListener('resize', _resizeWaves);
+    // No se conecta el micrófono al destino: solo se analiza (VAD + voz).
 
     _rafId = requestAnimationFrame(_loop);
-  }
-
-  /**
-   * Ajusta el buffer de los canvases de onda a su tamaño renderizado
-   * para una visualización nítida (evita el estiramiento borroso).
-   */
-  function _resizeWaves() {
-    ['micWave', 'speakWave'].forEach(function (id) {
-      var canvas = document.getElementById(id);
-      if (!canvas) return;
-      var rect = canvas.getBoundingClientRect();
-      if (rect.width > 10) canvas.width = Math.round(rect.width);
-      if (rect.height > 10) canvas.height = Math.round(rect.height);
-    });
   }
 
   // ==================================================================
@@ -219,14 +202,11 @@ window.ILURealtime = (function () {
     var micLevel = _readLevel(_micAnalyser, _micData);
     var speakLevel = _readLevel(_speakAnalyser, _speakData);
 
-    // Plasma reacciona a quien habla: mic mientras escuchas, voz de
-    // I.L.U. mientras responde.
+    // El plasma reacciona a la voz REAL: del usuario al escuchar, de
+    // I.L.U. al responder (su propia voz). No hay barras ni ondas
+    // separadas: la presencia ES la visualización.
     if (_speaking) _setPlasmaEnergy(speakLevel);
     else _setPlasmaEnergy(micLevel);
-
-    _emit('onVisual', { mic: micLevel, speak: speakLevel });
-    _drawWave('micWave', _micData, _micAnalyser.fftSize);
-    _drawWave('speakWave', _speakData, _speakAnalyser.fftSize);
 
     _runVad(micLevel);
   }
@@ -521,36 +501,6 @@ window.ILURealtime = (function () {
     if (window.ILUPlasma && window.ILUPlasma.setEnergy) {
       window.ILUPlasma.setEnergy(level);
     }
-  }
-
-  /**
-   * Dibuja la onda time-domain de un analizador en un canvas.
-   * La onda es REAL: se deriva del audio que pasa por el AnalyserNode.
-   */
-  function _drawWave(canvasId, data, fftSize) {
-    var canvas = document.getElementById(canvasId);
-    if (!canvas) return;
-    var ctx = canvas.getContext('2d');
-    var w = canvas.width;
-    var h = canvas.height;
-
-    ctx.clearRect(0, 0, w, h);
-
-    var mid = h / 2;
-    var step = Math.max(1, Math.floor(data.length / w));
-
-    ctx.strokeStyle = '#8b5cf6';
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-
-    for (var x = 0; x < w; x++) {
-      var idx = Math.min(data.length - 1, x * step);
-      var v = (data[idx] - 128) / 128;          // [-1, 1]
-      var y = mid + v * (mid - 3);
-      if (x === 0) ctx.moveTo(x, y);
-      else ctx.lineTo(x, y);
-    }
-    ctx.stroke();
   }
 
   // ==================================================================

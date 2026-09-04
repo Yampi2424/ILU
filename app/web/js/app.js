@@ -39,13 +39,11 @@
     if (window.ILURealtime && ILURealtime.init()) {
       ILURealtime.setCallbacks({
         onUtterance: _sendVoiceText,
-        onInterim: _showVoiceTranscript,
+        onInterim: _onLiveTranscript,
         onListening: _onRealtimeListening,
         onCapturing: _onCapturing,
         onSpeaking: _onSpeaking,
         onBargeIn: _onBargeIn,
-        onVisual: _onVisual,
-        onStatus: _setVoiceStatus,
         onModeChange: _onVoiceModeChange,
         onError: _onVoiceError,
         onUnavailable: _onVoiceUnavailable
@@ -59,7 +57,8 @@
       ILUVoice.init();
       ILUVoice.configure({ onTranscript: _sendVoiceText });
       ILUVoice.setCallbacks({
-        onTranscribed: _showVoiceTranscript,
+        onInterim: _onLiveTranscript,
+        onTranscribed: _onLiveTranscript,
         onListening: _onVoiceListening,
         onError: _onVoiceError,
         onUnavailable: _onVoiceUnavailable,
@@ -90,7 +89,6 @@
       if (ILURealtime.isActive()) {
         ILURealtime.stop();
         _setMicUI('idle');
-        _hideVoiceVis();
       } else {
         ILURealtime.start();
       }
@@ -209,6 +207,8 @@
    */
   function _sendVoiceText(text) {
     if (!text) return;
+    // El mensaje "en vivo" se consolida en un mensaje real de usuario.
+    ILUUI.clearLiveUserMessage();
     if (_sending) {
       // Ya hay una petición en curso: no encolar por voz.
       if (_voiceEngine === 'legacy' && window.ILUVoice) window.ILUVoice.cancelTurn();
@@ -341,35 +341,44 @@
 
   // --- UI de voz ----------------------------------------------------
 
-  function _showVoiceTranscript(text) {
-    var el = document.getElementById('voiceTranscript');
-    if (el) el.textContent = text;
-    _refreshVoiceBar();
+  /** Lo que I.L.U. escucha mientras hablas → mensaje vivo en el chat. */
+  function _onLiveTranscript(text) {
+    if (!text) return;
+    ILUUI.liveUserMessage(text);
   }
 
   function _onVoiceListening(on) {
     _setMicUI(on ? 'listening' : 'idle');
-    _setVoiceStatus(on ? 'Escuchando…' : '');
   }
 
   function _onVoiceModeChange(on) {
     _setMicUI(on ? 'listening' : 'idle');
-    _setVoiceStatus(on ? 'Voz activa — habla para conversar' : '');
-    if (on) _showVoiceVis();
-    else _hideVoiceVis();
+    // Modo voz: I.L.U. presente como centro; la interfaz se repliega.
+    document.body.classList.toggle('voice-mode', on);
+    if (on) ILUCore.showListening();
+    else ILUCore.showIdle();
   }
 
   function _onVoiceError(err) {
-    _setVoiceStatus('Error de voz: ' + err);
+    ILUUI.appendMessage('assistant', 'Error de voz: ' + err, 'VOZ');
     ILUCore.set(ILUCore.STATES.ERROR);
     setTimeout(function () { ILUCore.showIdle(); }, 2500);
   }
 
   function _onVoiceUnavailable(reason) {
     if (reason === 'mic_permission') {
-      _setVoiceStatus('Concede acceso al micrófono para hablar');
+      ILUUI.appendMessage(
+        'assistant',
+        'Concede acceso al micrófono para poder conversar conmigo.',
+        'VOZ'
+      );
+      _setMicUI('idle');
     } else {
-      _setVoiceStatus('La voz no está disponible en este navegador');
+      ILUUI.appendMessage(
+        'assistant',
+        'La voz no está disponible en este navegador.',
+        'VOZ'
+      );
       // Solo se desactiva el botón cuando la voz es genuinamente
       // insoportada (motor legado); un permiso denegado es reversible.
       if (_voiceEngine !== 'realtime') {
@@ -377,7 +386,6 @@
         if (micBtn) micBtn.disabled = true;
       }
     }
-    _refreshVoiceBar();
   }
 
   // --- Callbacks del motor REAL-TIME (realtime.js) ------------------
@@ -386,81 +394,31 @@
     _setMicUI(on ? 'listening' : 'idle');
   }
 
-  /** El usuario está hablando (VAD): resalta el micrófono y plasma. */
+  /** El usuario está hablando (VAD): resalta el micrófono y el plasma. */
   function _onCapturing(on) {
-    _setMicUI(on ? 'active' : 'listening');
-    if (on) {
-      _setVoiceStatus('Hablando…');
-      ILUCore.showListening();
-    }
+    _setMicUI(on ? 'live' : 'listening');
+    if (on) ILUCore.showListening();
   }
 
-  /** I.L.U. está reproduciendo su respuesta: visual de voz activa. */
+  /** I.L.U. está reproduciendo su respuesta: la presencia "cobra voz". */
   function _onSpeaking(on) {
     _setMicUI(on ? 'speaking' : 'listening');
-    if (on) {
-      _setVoiceStatus('I.L.U. responde…');
-      ILUCore.set(ILUCore.STATES.RESPONDING);
-    } else {
-      // Terminó de hablar: volver a escuchar.
-      _setVoiceStatus('');
-      ILUCore.showListening();
-    }
+    if (on) ILUCore.set(ILUCore.STATES.RESPONDING);
+    else ILUCore.showListening();
   }
 
-  /** Barge-in: el usuario interrumpió la respuesta de I.L.U. */
+  /** Barge-in: el usuario interrumpió a I.L.U.; vuelve a escucharla. */
   function _onBargeIn() {
-    _setVoiceStatus('Interrumpido — te escucho');
     ILUCore.showListening();
-  }
-
-  /**
-   * Niveles de audio reales (mic / voz de I.L.U.) en cada frame.
-   * Actualmente el plasma ya reacciona vía ILUPlasma.setEnergy (lo
-   * alimenta realtime.js); aquí podemos reflejar estado adicional si
-   * se desea, o simplemente descartar (el dato ya se visualizó en los
-   * canvases por el propio motor).
-   */
-  function _onVisual(levels) {
-    // No-op: la onda se dibuja en los canvases por el motor; el plasma
-    // recibe la energía directamente desde realtime.js.
-    void levels;
-  }
-
-  // --- Visualización dual ------------------------------------------
-
-  function _showVoiceVis() {
-    var vis = document.getElementById('voiceVis');
-    if (vis) vis.hidden = false;
-  }
-
-  function _hideVoiceVis() {
-    var vis = document.getElementById('voiceVis');
-    if (vis) vis.hidden = true;
   }
 
   function _setMicUI(state) {
     var micBtn = document.getElementById('micButton');
     if (!micBtn) return;
-    micBtn.classList.remove('active', 'speaking');
-    if (state === 'listening') micBtn.classList.add('active');
-    else if (state === 'active' || state === 'speaking') micBtn.classList.add('speaking');
-  }
-
-  function _setVoiceStatus(text) {
-    var status = document.getElementById('voiceStatus');
-    if (status) status.textContent = text;
-    _refreshVoiceBar();
-  }
-
-  function _refreshVoiceBar() {
-    var bar = document.getElementById('voiceBar');
-    if (!bar) return;
-    var status = document.getElementById('voiceStatus');
-    var transcript = document.getElementById('voiceTranscript');
-    var hasStatus = status && status.textContent;
-    var hasTrans = transcript && transcript.textContent;
-    bar.hidden = !(hasStatus || hasTrans);
+    micBtn.classList.remove('active', 'speaking', 'live');
+    if (state === 'listening' || state === 'active') micBtn.classList.add('active');
+    else if (state === 'live') micBtn.classList.add('active', 'live');
+    else if (state === 'speaking') micBtn.classList.add('speaking');
   }
 
   // --- Arranque -----------------------------------------------------

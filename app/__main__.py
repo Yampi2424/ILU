@@ -387,7 +387,12 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "capabilities": ILU_IDENTITY["capabilities"],
                 "limits": ILU_IDENTITY["limits"],
                 "autonomy": settings.autonomy_level,
-                "tasks": task_manager.stats()
+                "tasks": task_manager.stats(),
+                "goals": core.planner.stats(),
+                "learning": core.learning.profile().get("count", 0),
+                "proactivity": core.proactivity.stats(),
+                "perception": core.perception.list_capabilities(),
+                "integrations": core.integrations.list_capabilities()
             })
 
         elif (
@@ -481,6 +486,66 @@ class ILUHandler(BaseHTTPRequestHandler):
                 ),
                 "devices": core.devices.list(),
                 "emergency_active": core.emergency.list_active(),
+            })
+
+        elif self._path() == "/goals":
+            # JARVIS Evolution: objetivos y planes de I.L.U.
+            status = query.get("status")
+
+            goals = core.planner.list(status=status)
+
+            self.send_json(200, {
+                "goals": goals,
+                "count": len(goals),
+                "stats": core.planner.stats(),
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "goals"
+        ):
+            goal = core.planner.get(segments[1])
+
+            if goal is None:
+                self.send_json(404, {"error": "goal_not_found"})
+            else:
+                self.send_json(200, {
+                    "goal": goal,
+                    "progress": core.planner.progress(goal["id"]),
+                })
+
+        elif self._path() == "/profile":
+            # JARVIS Evolution: perfil de aprendizaje/personalización.
+            self.send_json(200, core.learning.profile())
+
+        elif self._path() == "/proactivity":
+            # JARVIS Evolution: reglas proactivas de I.L.U.
+            kind = query.get("kind")
+            enabled = query.get("enabled")
+
+            if enabled is not None:
+                enabled = enabled.lower() in ("1", "true", "yes")
+
+            rules = core.proactivity.list(kind=kind, enabled=enabled)
+
+            self.send_json(200, {
+                "rules": rules,
+                "count": len(rules),
+                "stats": core.proactivity.stats(),
+                "due_now": len(core.proactivity.due_now()),
+            })
+
+        elif self._path() == "/perception":
+            # JARVIS Evolution: sensores y percepción del entorno.
+            self.send_json(200, {
+                "capabilities": core.perception.list_capabilities(),
+                "perception": core.perception.perceive_all(),
+            })
+
+        elif self._path() == "/integrations":
+            # JARVIS Evolution: catálogo de integraciones con dispositivos.
+            self.send_json(200, {
+                "capabilities": core.integrations.list_capabilities(),
             })
 
         else:

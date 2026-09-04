@@ -146,6 +146,17 @@ window.ILUApi = (function () {
       return _put('/tasks/' + encodeURIComponent(taskId) + '/progress', { progress: progress });
     },
 
+    // --- JARVIS Evolution: objetivos, aprendizaje, proactividad,
+    //     percepción e integración con dispositivos ---
+    goals: function () { return _get('/goals'); },
+    goalDetail: function (goalId) {
+      return _get('/goals/' + encodeURIComponent(goalId));
+    },
+    profile: function () { return _get('/profile'); },
+    proactivity: function () { return _get('/proactivity'); },
+    perception: function () { return _get('/perception'); },
+    integrations: function () { return _get('/integrations'); },
+
     // --- Seguridad / Permisos ---
     security: function () { return _get('/security'); },
     grants: function (params) {

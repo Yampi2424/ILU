@@ -94,25 +94,34 @@ class TestVoiceStaticFiles:
         assert b"createWebSpeechSynthesizer" in body
 
     def test_voice_css_styles(self, voice_server):
+        """La voz no es una app de grabación: sin barras ni ecualizadores;
+        el plasma es el centro y el micrófono un interruptor de presencia."""
         status, headers, body = _get("/css/ilu.css")
         assert status == 200
         assert b".chat-mic" in body
-        assert b".voice-bar" in body
-        assert b".voice-status" in body
-        assert b".voice-transcript" in body
         assert b".chat-mic.active" in body
+        assert b".chat-mic.live" in body
         assert b".chat-mic.speaking" in body
-        assert b"ilu-mic-pulse" in body
+        assert b"ilu-mic-breathe" in body
+        assert b"body.voice-mode" in body
+        assert b".chat-msg.live" in body
+        # Elementos de "aplicación de grabación" eliminados.
+        assert b".voice-bar" not in body
+        assert b".voice-status" not in body
+        assert b".voice-transcript" not in body
+        assert b"ilu-mic-pulse" not in body
 
     def test_mic_button_in_html(self, voice_server):
         status, _, body = _get("/")
         assert status == 200
         assert b'id="micButton"' in body
-        assert b'id="voiceBar"' in body
-        assert b'id="voiceStatus"' in body
-        assert b'id="voiceTranscript"' in body
-        assert b'aria-label="Activar voz"' in body
+        # Sin barras de visualización ni estados de grabación.
+        assert b'id="voiceBar"' not in body
+        assert b'id="voiceStatus"' not in body
+        assert b'id="voiceTranscript"' not in body
+        assert "Activar conversación por voz".encode("utf-8") in body
         assert b'/js/voice.js' in body
+        assert b'/js/realtime.js' in body
 
     def test_voice_js_loads_before_app_js(self, voice_server):
         """voice.js debe cargarse antes de app.js."""

@@ -884,13 +884,38 @@ window.ILUPlasma = (function () {
     var breathe = Math.sin(_time * 0.5 * _speed) * (0.12 + _energy * 0.3);
     var haloR = _plasmaRadius * (1.25 + breathe + _energy * 0.12);
     var haloGrd = _ctx.createRadialGradient(cx, cy, _plasmaRadius * 0.3, cx, cy, haloR);
-    haloGrd.addColorStop(0, rgbStr(color, 0.06));
-    haloGrd.addColorStop(0.5, rgbStr(glowColor, 0.025));
+    haloGrd.addColorStop(0, rgbStr(color, 0.06 + _energy * 0.05));
+    haloGrd.addColorStop(0.5, rgbStr(glowColor, 0.025 + _energy * 0.04));
     haloGrd.addColorStop(1, 'rgba(0,0,0,0)');
     _ctx.fillStyle = haloGrd;
     _ctx.beginPath();
     _ctx.arc(cx, cy, haloR, 0, 6.2832);
     _ctx.fill();
+
+    // --- ANILLO DE RESONANCIA (voz real) ---
+    // Onda de energía que emana de la presencia con la voz viva
+    // (del usuario al escuchar, de I.L.U. al responder). Es la
+    // "voz visible" del plasma: reacciona al audio real, no a un
+    // ecualizador. Silencioso en reposo (_energy ≈ 0).
+    if (_energy > 0.03) {
+      var ringR = _plasmaRadius * (1 + _energy * 0.55);
+      var ringA = Math.min(1, _energy * 1.5);
+      _ctx.globalCompositeOperation = 'screen';
+      _ctx.globalAlpha = ringA * 0.55;
+      _ctx.strokeStyle = rgbStr(glowColor, 1);
+      _ctx.lineWidth = 1.5 + _energy * 4;
+      _ctx.lineCap = 'round';
+      _ctx.beginPath();
+      _ctx.arc(cx, cy, ringR, 0, 6.2832);
+      _ctx.stroke();
+      _ctx.globalAlpha = ringA * 0.2;
+      _ctx.lineWidth = 8 + _energy * 6;
+      _ctx.beginPath();
+      _ctx.arc(cx, cy, ringR * 1.07, 0, 6.2832);
+      _ctx.stroke();
+      _ctx.globalAlpha = 1;
+      _ctx.globalCompositeOperation = 'source-over';
+    }
 
     // --- CUERPO DE PLASMA (el contorno se organiza hacia la silueta) ---
     renderBody(_ctx, cx, cy, _plasmaRadius, _time * _speed, _noise, effectiveDensity, color, glowColor, _silhouette);
@@ -946,7 +971,9 @@ window.ILUPlasma = (function () {
     _ctx.globalAlpha = 1;
 
     // --- BRILLO CENTRAL (siempre) ---
-    var corePulse = 0.3 + Math.sin(_time * 0.8 * _speed) * 0.1;
+    // El núcleo se enciende con la voz viva: al hablar se vuelve más
+    // luminoso, como una entidad que "cobra voz".
+    var corePulse = 0.3 + Math.sin(_time * 0.8 * _speed) * 0.1 + _energy * 0.45;
     var coreGrd = _ctx.createRadialGradient(cx, cy, 0, cx, cy, _plasmaRadius * 0.25);
     coreGrd.addColorStop(0, rgbStr({ r: 255, g: 255, b: 255 }, corePulse * 0.4));
     coreGrd.addColorStop(0.4, rgbStr(glowColor, corePulse * 0.25));

@@ -71,6 +71,17 @@ class ILUSettings:
             )
         )
 
+        # ---- JARVIS Evolution: planificación y proactividad ----
+        self.goals_path = os.environ.get(
+            "ILU_GOALS_PATH",
+            "memory/goals.jsonl"
+        )
+
+        self.proactivity_path = os.environ.get(
+            "ILU_PROACTIVITY_PATH",
+            "memory/proactivity.jsonl"
+        )
+
         # ---- Bloque 8: sistema de autoridad / permisos ----
         # Unica variable que I.L.U. necesita conocer del mundo humano:
         # quién es el OWNER (autoridad raíz) en este dispositivo.

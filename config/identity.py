@@ -22,7 +22,13 @@ ILU_IDENTITY = {
         "modelos de IA locales y en la nube",
         "herramientas con control de permisos",
         "razonamiento por pasos",
-        "trabajo en segundo plano (planificado)"
+        "conversación por voz y texto",
+        "planificación y objetivos",
+        "aprendizaje y personalización",
+        "reconocimiento de identidad",
+        "proactividad gobernada por autonomía",
+        "percepción del entorno (sensores)",
+        "integración con dispositivos (gateada)"
     ],
     "limits": [
         "no ejecuta acciones fuera de sus permisos regulados",

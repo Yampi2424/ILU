@@ -43,6 +43,9 @@ memory/data.json
 memory/conversations.jsonl
 memory/audit.jsonl
 memory/tasks.json
+# JARVIS Evolution: estado local (objetivos y proactividad) no se versiona
+memory/goals.jsonl
+memory/proactivity.jsonl
 # Notificaciones locales de I.L.U. (tool notify)
 memory/notifications.jsonl
 

@@ -5,6 +5,12 @@ from app import toolshape
 from app.providers import create_runtime_provider
 from app.security import SecurityGate
 from app.audit import AuditLog
+from app.planning import GoalPlanner
+from app.learning import LearningEngine
+from app.identity_recognition import IdentityRecognizer
+from app.proactivity import ProactivityEngine
+from app.perception import create_perception_hub
+from app.integrations import IntegrationManager
 from config.settings import ILUSettings
 from tools import create_tool_manager, ToolCall
 from tasks import TaskManager
@@ -107,6 +113,26 @@ class ILUCore:
         # no se inyecta a la inteligencia, solo auxilia al core cuando un
         # principal humano ordena una concesión/revocación.
 
+        # ---- JARVIS Evolution: planificación, aprendizaje, identidad,
+        #      proactividad, percepción e integración de dispositivos.
+        #      Ninguno de estos módulos otorga permisos por sí mismo:
+        #      la autoridad sigue viviendo en Authority/SecurityGate.
+        self.planner = GoalPlanner(
+            path=self.settings.goals_path,
+            task_manager=self.tasks,
+        )
+        self.learning = LearningEngine(memory=self.memory)
+        self.recognizer = IdentityRecognizer()
+        self.proactivity = ProactivityEngine(
+            path=self.settings.proactivity_path
+        )
+        self.perception = create_perception_hub()
+        self.integrations = IntegrationManager(
+            security=self.security,
+            audit=self.audit,
+            grant_store=None,   # se inyecta abajo tras crear el store
+        )
+
         self.policy = Policy(path=self.settings.policy_path)
         self.principals = PrincipalRegistry(
             path=self.settings.principals_path,
@@ -115,6 +141,11 @@ class ILUCore:
         self.grant_store = GrantStore(
             path=self.settings.grants_path
         )
+        # Conexiones que dependen de objetos creados después del planner:
+        # el reconocedor conoce a los principales y las integraciones
+        # consultan el grant_store real para autorizar.
+        self.recognizer.principals = self.principals
+        self.integrations.grant_store = self.grant_store
         self.emergency = EmergencyRegistry(
             policy=self.policy,
             path=self.settings.emergency_path,
@@ -1283,6 +1314,361 @@ class ILUCore:
 
         return None
 
+    # ------------------------------------------------------------------
+    # JARVIS Evolution: planificación, aprendizaje, identidad,
+    # proactividad, percepción e integraciones por lenguaje natural.
+    #
+    # Ninguno de estos comandos otorga permisos: solo organiza intenciones
+    # (planes), escribe en la memoria propia de I.L.U. (aprendizaje),
+    # reconoce identidades para personalizar, o lee el entorno. Las
+    # integraciones sobre el mundo siempre exigen grant activo.
+    # ------------------------------------------------------------------
+
+    def _javis_command(self, message):
+        lowered = message.lower().strip()
+
+        # ----------------------------------------------------------
+        # PLANIFICACIÓN / OBJETIVOS
+        # ----------------------------------------------------------
+        plan_prefixes = (
+            "planifica ",
+            "planificá ",
+            "crea un plan para ",
+            "creá un plan para ",
+            "haz un plan para ",
+            "hacé un plan para ",
+            "establece un objetivo: ",
+            "establece el objetivo ",
+            "armá un plan para ",
+            "arma un plan para ",
+        )
+
+        for prefix in plan_prefixes:
+            if lowered.startswith(prefix):
+                objective = message[len(prefix):].strip().strip(":.,;")
+
+                if not objective:
+                    return {
+                        "success": True,
+                        "input": message,
+                        "intent": "plan_ask",
+                        "response": (
+                            "¿Qué objetivo quieres que planifique? "
+                            "Ejemplo: planifica organizar la mudanza."
+                        ),
+                        "core": self.name,
+                        "version": self.version,
+                    }
+
+                # Pasos explícitos separados por coma se respetan; si no,
+                # el plan usa fases por defecto.
+                if "," in objective:
+                    steps = [
+                        part.strip() for part in objective.split(",")
+                        if part.strip()
+                    ]
+                    goal = self.planner.create(objective, steps=steps)
+                else:
+                    goal = self.planner.create(objective)
+
+                self.audit.record(
+                    actor="ilu",
+                    action="goal_create",
+                    goal_id=goal["id"],
+                    objective=objective,
+                )
+
+                steps_text = " | ".join(
+                    f"{i + 1}. {step['title']}"
+                    for i, step in enumerate(goal["steps"])
+                )
+
+                return {
+                    "success": True,
+                    "input": message,
+                    "intent": "plan_create",
+                    "response": (
+                        f"Objetivo creado: {goal['title']}. "
+                        f"Plan: {steps_text}."
+                    ),
+                    "goal": goal,
+                    "core": self.name,
+                    "version": self.version,
+                }
+
+        plan_list_phrases = (
+            "mis planes",
+            "mis objetivos",
+            "lista de planes",
+            "listar planes",
+            "qué objetivos tengo",
+            "que objetivos tengo",
+            "estado de mis objetivos",
+            "estado de mis planes",
+        )
+
+        if any(phrase in lowered for phrase in plan_list_phrases):
+            goals = self.planner.list()
+
+            if not goals:
+                return self._javis_reply(
+                    message,
+                    "No tengo objetivos planificados todavía.",
+                    "plan_list",
+                    goals=[],
+                )
+
+            lines = [
+                f"{goal['title']} — {goal['status']} "
+                f"({self.planner.progress(goal['id'])['percent']}%)"
+                for goal in goals[:10]
+            ]
+
+            return self._javis_reply(
+                message,
+                "Mis objetivos: " + " | ".join(lines),
+                "plan_list",
+                goals=[
+                    {
+                        "id": goal["id"],
+                        "title": goal["title"],
+                        "status": goal["status"],
+                        "progress": self.planner.progress(goal["id"]),
+                    }
+                    for goal in goals[:10]
+                ],
+            )
+
+        # ----------------------------------------------------------
+        # APRENDIZAJE / PERSONALIZACIÓN
+        # ----------------------------------------------------------
+        learn_phrases = (
+            "qué has aprendido de mí",
+            "que has aprendido de mi",
+            "qué aprendiste sobre mí",
+            "que aprendiste sobre mi",
+            "qué sabes de mí",
+            "que sabes de mi",
+            "muéstrame tu perfil",
+            "muestrame tu perfil",
+            "qué has aprendido sobre mi",
+            "que has aprendido sobre mi",
+        )
+
+        if any(phrase in lowered for phrase in learn_phrases):
+            summary = self.learning.summary()
+            profile = self.learning.profile()
+
+            return self._javis_reply(
+                message,
+                summary,
+                "learning_profile",
+                profile=profile,
+            )
+
+        # ----------------------------------------------------------
+        # IDENTIDAD / RECONOCIMIENTO
+        # ----------------------------------------------------------
+        identity_phrases = (
+            "quién soy",
+            "quien soy",
+            "reconóceme",
+            "reconceme",
+            "¿quién crees que soy",
+            "quien crees que soy",
+            "a quién estás hablando",
+        )
+
+        if any(phrase in lowered for phrase in identity_phrases):
+            recognition = self.recognizer.recognize(message)
+
+            if not recognition["recognized"]:
+                response = (
+                    "Todavía no puedo identificarte con certeza. "
+                    "Dime tu nombre o configúrame tu identidad y aliases."
+                )
+            else:
+                kind_label = {
+                    "owner": "mi owner",
+                    "family_member": "un miembro de la familia",
+                    "authorized_user": "un usuario autorizado",
+                    "ilu": "I.L.U. misma",
+                }.get(recognition["kind"], recognition["kind"])
+
+                response = (
+                    f"Te reconozco como {kind_label} "
+                    f"({recognition['principal_id']}), por "
+                    f"{recognition['method']}."
+                )
+
+            return self._javis_reply(
+                message,
+                response,
+                "identity_recognition",
+                recognition=recognition,
+            )
+
+        # ----------------------------------------------------------
+        # PROACTIVIDAD / RECORDATORIOS
+        # ----------------------------------------------------------
+        reminder_prefixes = (
+            "recuérdame ",
+            "recordame ",
+            "recuerdame ",
+            "avisame que ",
+            "avísame que ",
+        )
+
+        for prefix in reminder_prefixes:
+            if lowered.startswith(prefix):
+                rest = message[len(prefix):].strip()
+
+                # Formato: "... en N minutos" / "... en N horas"
+                import re as _re
+                match = _re.search(
+                    r"\ben\s+(\d+)\s*(minuto|minutos|min|hora|horas|h)\b",
+                    rest,
+                )
+
+                if not match:
+                    return {
+                        "success": True,
+                        "input": message,
+                        "intent": "reminder_ask",
+                        "response": (
+                            "¿En cuánto tiempo? Dime: "
+                            "'recuérdame X en 30 minutos'."
+                        ),
+                        "core": self.name,
+                        "version": self.version,
+                    }
+
+                amount = int(match.group(1))
+                unit = match.group(2)
+
+                if unit in ("hora", "horas", "h"):
+                    minutes = amount * 60
+                else:
+                    minutes = amount
+
+                text = rest[:match.start()].strip(" .,;:")
+
+                if not text:
+                    return None
+
+                rule = self.proactivity.add(
+                    kind="reminder",
+                    text=text,
+                    cadence_minutes=minutes,
+                )
+
+                self.audit.record(
+                    actor="ilu",
+                    action="reminder_create",
+                    rule_id=rule["id"],
+                    text=text,
+                )
+
+                return self._javis_reply(
+                    message,
+                    f"Te lo recuerdo en {amount} {unit}: '{text}'.",
+                    "reminder_create",
+                    rule={
+                        "id": rule["id"],
+                        "kind": rule["kind"],
+                        "text": rule["text"],
+                    },
+                )
+
+        reminder_list_phrases = (
+            "mis recordatorios",
+            "lista de recordatorios",
+            "qué recordatorios tengo",
+            "que recordatorios tengo",
+        )
+
+        if any(phrase in lowered for phrase in reminder_list_phrases):
+            rules = self.proactivity.list()
+
+            if not rules:
+                return self._javis_reply(
+                    message,
+                    "No tengo recordatorios activos.",
+                    "reminder_list",
+                    reminders=[],
+                )
+
+            lines = [
+                f"{rule['text']} ({rule['kind']})"
+                for rule in rules[:10]
+            ]
+
+            return self._javis_reply(
+                message,
+                "Mis recordatorios: " + " | ".join(lines),
+                "reminder_list",
+                reminders=[
+                    {
+                        "id": rule["id"],
+                        "kind": rule["kind"],
+                        "text": rule["text"],
+                        "enabled": rule["enabled"],
+                    }
+                    for rule in rules[:10]
+                ],
+            )
+
+        # ----------------------------------------------------------
+        # PERCEPCIÓN / SENSORES
+        # ----------------------------------------------------------
+        perceive_phrases = (
+            "qué ves",
+            "que ves",
+            "qué sensores tienes",
+            "que sensores tienes",
+            "percibí el entorno",
+            "percibe el entorno",
+            "qué percibes",
+            "que percibes",
+        )
+
+        if any(phrase in lowered for phrase in perceive_phrases):
+            caps = self.perception.list_capabilities()
+            all_data = self.perception.perceive_all()
+
+            available = [
+                c["capability"] for c in caps if c["available"]
+            ]
+
+            response = (
+                "Mis sensores disponibles: "
+                + (", ".join(available) if available else "ninguno")
+                + "."
+            )
+
+            return self._javis_reply(
+                message,
+                response,
+                "perception_status",
+                capabilities=caps,
+                perception=all_data,
+            )
+
+        return None
+
+    def _javis_reply(self, message, response, intent, **extra):
+        payload = {
+            "success": True,
+            "input": message,
+            "intent": intent,
+            "response": response,
+            "core": self.name,
+            "version": self.version,
+        }
+
+        payload.update(extra)
+        return payload
+
     def _authority_reply(self, message, response, intent, **extra):
         payload = {
             "success": True,
@@ -1642,6 +2028,21 @@ class ILUCore:
             return authority_command
 
         # ==========================================================
+        # 0.7 JARVIS EVOLUTION: planificación, aprendizaje, identidad,
+        #     proactividad y percepción por lenguaje natural.
+        #
+        # Son comandos organizativos/lectura sobre el dominio propio de
+        # I.L.U. (planes, memoria, identidad, recordatorios, sensores);
+        # ninguno concede permisos. Se evalúan aquí para resolver sin
+        # depender del LLM cuando el mensaje es un comando directo.
+        # ==========================================================
+
+        javis_command = self._javis_command(message)
+
+        if javis_command is not None:
+            return javis_command
+
+        # ==========================================================
         # 1. MEMORIA EXPLÍCITA
         # ==========================================================
 
@@ -1939,6 +2340,18 @@ class ILUCore:
             memory_type="conversation",
             importance=3
         )
+
+        # JARVIS Evolution (Bloque B): aprendizaje pasivo. I.L.U. distila
+        # de la conversación la información estable y de alto valor
+        # (preferencias, datos personales, proyectos, hechos) hacia su
+        # memoria semántica para personalizarse con el tiempo. Solo escribe
+        # en su propia memoria; nunca ejecuta ni concede permisos.
+        try:
+            self.learning.learn(message)
+        except Exception:
+            # El aprendizaje es best-effort: un fallo aquí no debe romper
+            # la respuesta de la conversación.
+            pass
 
         # Bloque 9: cuál motor respondió (primario o, si se hizo fallback,
         # el respaldo local). Solo aplica cuando el resultado vino del

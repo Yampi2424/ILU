@@ -103,6 +103,34 @@ window.ILUUI = (function () {
     container.scrollTop = container.scrollHeight;
   }
 
+  /**
+   * Mensaje de usuario "en vivo": muestra en el chat lo que I.L.U.
+   * está escuchando mientras el usuario habla (transcripción parcial).
+   * Se actualiza en cada resultado intermedio y se consolida al final
+   * del turno (clearLiveUserMessage).
+   */
+  function liveUserMessage(text) {
+    const container = document.getElementById('chatMessages');
+    if (!container) return;
+
+    let live = document.getElementById('liveUserMsg');
+    if (!live) {
+      live = document.createElement('div');
+      live.id = 'liveUserMsg';
+      live.className = 'chat-msg user live';
+      const content = document.createElement('div');
+      live.appendChild(content);
+      container.appendChild(live);
+    }
+    live.querySelector('div').textContent = text;
+    container.scrollTop = container.scrollHeight;
+  }
+
+  function clearLiveUserMessage() {
+    const live = document.getElementById('liveUserMsg');
+    if (live) live.remove();
+  }
+
   function removeTypingIndicator() {
     const el = document.getElementById('typingIndicator');
     if (el) el.remove();
@@ -456,6 +484,8 @@ window.ILUUI = (function () {
     appendMessage: appendMessage,
     showTypingIndicator: showTypingIndicator,
     removeTypingIndicator: removeTypingIndicator,
+    liveUserMessage: liveUserMessage,
+    clearLiveUserMessage: clearLiveUserMessage,
     updateSidebarContext: updateSidebarContext,
     updateSidebarTool: updateSidebarTool,
     updateSidebarSubagent: updateSidebarSubagent,

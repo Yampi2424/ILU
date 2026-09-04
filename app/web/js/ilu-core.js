@@ -28,11 +28,11 @@ window.ILUCore = (function () {
   };
 
   const STATE_LABELS = {
-    idle:           'I.L.U. está lista',
-    listening:      'Escuchando…',
+    idle:           'I.L.U. está presente',
+    listening:      'Te escucho',
     thinking:       'Pensando…',
     working:        'Trabajando…',
-    responding:     'I.L.U. responde',
+    responding:     'Te hablo',
     learning:       'Aprendiendo…',
     authorization:  'Esperando autorización…',
     error:          'Error',

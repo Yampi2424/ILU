@@ -369,6 +369,9 @@ html, body {
 }
 
 /* === VOZ ========================================================= */
+/* La voz no es una "aplicación de grabación": el micrófono es un
+   interruptor de presencia discreto y elegante. El plasma, no unas
+   barras, es quien reacciona a la voz. */
 
 .chat-mic {
   background: var(--ilu-bg-card);
@@ -381,7 +384,7 @@ html, body {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: var(--ilu-transition-fast);
+  transition: var(--ilu-transition);
   flex-shrink: 0;
 }
 
@@ -396,81 +399,75 @@ html, body {
   cursor: not-allowed;
 }
 
+/* Sesión de voz activa: I.L.U. presente, en tono violeta (nada de
+   rojo de "grabando"). */
 .chat-mic.active {
-  color: var(--ilu-error);
-  border-color: rgba(239, 68, 68, 0.5);
-  background: var(--ilu-error-soft);
-  animation: ilu-mic-pulse 1.2s ease-in-out infinite;
-}
-
-.chat-mic.speaking {
   color: var(--ilu-glow);
   border-color: var(--ilu-border-active);
   background: var(--ilu-glow-soft);
+  box-shadow: 0 0 12px rgba(139, 92, 246, 0.25);
 }
 
-@keyframes ilu-mic-pulse {
-  0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4); }
-  50% { box-shadow: 0 0 0 6px rgba(239, 68, 68, 0); }
+/* El usuario está hablando: latido suave y continuo. */
+.chat-mic.live {
+  animation: ilu-mic-breathe 1.4s ease-in-out infinite;
 }
 
-.voice-bar {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 0 var(--ilu-gap-lg) var(--ilu-gap-sm);
-  font-size: 12px;
-  min-height: 22px;
-  flex-shrink: 0;
+/* I.L.U. está respondiendo: núcleo encendido. */
+.chat-mic.speaking {
+  color: #fff;
+  border-color: rgba(139, 92, 246, 0.6);
+  background: var(--ilu-glow);
 }
 
-.voice-status {
-  font-weight: 600;
-  color: var(--ilu-text-secondary);
-  white-space: nowrap;
+@keyframes ilu-mic-breathe {
+  0%, 100% { box-shadow: 0 0 6px rgba(139, 92, 246, 0.15); }
+  50% { box-shadow: 0 0 18px rgba(139, 92, 246, 0.5); }
 }
 
-.voice-transcript {
-  color: var(--ilu-text-dim);
+/* Mensaje de usuario "en vivo": lo que I.L.U. escucha mientras hablas,
+   aparece en el chat como una palabra real, no como un registro. */
+.chat-msg.live {
+  align-self: flex-end;
+  background: rgba(79, 70, 229, 0.55);
+  color: #fff;
   font-style: italic;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border: 1px dashed rgba(139, 92, 246, 0.5);
+  border-bottom-right-radius: 4px;
 }
 
-/* === VISUALIZACIÓN DUAL DE AUDIO (tiempo real) ==================== */
-
-.voice-vis {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0 var(--ilu-gap-lg) var(--ilu-gap-sm);
-  flex-shrink: 0;
+.chat-msg.live::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--ilu-glow);
+  animation: ilu-live-cursor 1s steps(2, end) infinite;
 }
 
-.vis-track {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+@keyframes ilu-live-cursor {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
 }
 
-.vis-label {
-  width: 44px;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.03em;
-  color: var(--ilu-text-dim);
-  text-align: right;
-  flex-shrink: 0;
+/* === MODO VOZ: I.L.U. presente como centro ======================== */
+
+/* Con la voz activa, la presencia se expande, la barra lateral se
+   atenúa y el foco queda en la entidad, no en la interfaz. */
+body.voice-mode .presence-zone {
+  width: 400px;
+  min-width: 400px;
+  background: radial-gradient(
+    circle at 50% 42%,
+    rgba(139, 92, 246, 0.10) 0%,
+    rgba(10, 10, 26, 0) 65%
+  );
 }
 
-.vis-wave {
-  flex: 1;
-  height: 48px;
-  border-radius: 8px;
-  background: rgba(0, 0, 0, 0.25);
-  border: 1px solid var(--ilu-border);
-  display: block;
+body.voice-mode .sidebar {
+  opacity: 0.35;
+}
+
+body.voice-mode .chat-messages {
+  padding-top: var(--ilu-gap);
 }
 
 /* === ZONA GENÉRICA (Tasks/Permisos/About sin presencia) =========== */

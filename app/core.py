@@ -317,6 +317,10 @@ class ILUCore:
     def _get_context(self, message):
         """
         Recupera recuerdos relevantes para una conversación normal.
+
+        Primero hace recall SEMÁNTICO del mensaje completo (por significado,
+        no solo por palabras); después el recall léxico por palabra como
+        refuerzo. Se deduplican por clave y se acota el resultado.
         """
 
         words = [
@@ -325,20 +329,34 @@ class ILUCore:
             if len(word.strip("¿?¡!,.:;")) >= 5
         ]
 
-        if not words:
-            return []
-
         results = []
+        seen = set()
 
+        # 1) Recall semántico: recuerdos afines al significado del mensaje,
+        #    aunque no compartan palabras exactas.
+        if message.strip():
+            try:
+                for item in self.memory.semantic_search(message, limit=5):
+                    key = item.get("key")
+                    if key and key in seen:
+                        continue
+                    if key:
+                        seen.add(key)
+                    results.append(item)
+            except Exception:
+                pass
+
+        # 2) Recall léxico por palabra (comportamiento previo, refuerzo).
         for word in words[:6]:
-            found = self.memory.search(
-                word,
-                limit=3
-            )
+            found = self.memory.search(word, limit=3)
 
             for item in found:
-                if item not in results:
-                    results.append(item)
+                key = item.get("key")
+                if key and key in seen:
+                    continue
+                if key:
+                    seen.add(key)
+                results.append(item)
 
         return results[:5]
 

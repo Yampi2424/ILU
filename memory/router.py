@@ -30,6 +30,7 @@ from datetime import datetime, timezone
 from memory.backends import MemoryRecord, create_backend, _now
 from memory.types import normalize_type, importance_default, lifecycle_of
 from memory import graph
+from memory.semantic import rank_records, OllamaEmbedder
 
 
 def _age_days(updated_at):
@@ -57,6 +58,13 @@ class MemoryRouter:
         self.device_id = os.environ.get("ILU_DEVICE_ID", "local")
         # La memoria de trabajo (volatile) no sobrevive a un reinicio.
         self.prune_volatile()
+        # Embedder semántico perezoso (Ollama si está disponible; si no, TF-IDF).
+        self._embedder = None
+
+    def _get_embedder(self):
+        if self._embedder is None:
+            self._embedder = OllamaEmbedder()
+        return self._embedder
 
     # ------------------------------------------------------------------
     # API enriquecida
@@ -112,6 +120,31 @@ class MemoryRouter:
     def query(self, query, types=None, limit=10):
         """Busca por relevancia; devuelve lista de MemoryRecord."""
         return self.backend.search(query, types=types, limit=limit)
+
+    def semantic_search(self, query, limit=10, memory_type=None):
+        """
+        Recall por SIGNIFICADO (búsqueda vectorial). Devuelve lista de
+        dicts con la forma de `search` (type/key/content/importance/...).
+
+        Usa embeddings reales de Ollama si el servidor los ofrece; si no,
+        cae a TF-IDF + coseno local. Nunca lanza y nunca bloquea la memoria.
+        """
+        try:
+            records = self.backend.list(
+                types=[memory_type] if memory_type else None,
+                limit=100000,
+            )
+            if not records:
+                return []
+            ranked = rank_records(
+                query,
+                records,
+                self._get_embedder(),
+                limit=limit,
+            )
+            return [self._to_store_dict(record) for record in ranked]
+        except Exception:
+            return []
 
     def list_by_type(self, memory_type, limit=100):
         """Lista recuerdos de un tipo concreto."""

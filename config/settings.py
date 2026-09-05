@@ -16,7 +16,7 @@ class ILUSettings:
 
         self.provider = os.environ.get(
             "ILU_AI_PROVIDER",
-            "local"
+            "omniroute"
         ).lower()
 
         self.environment = os.environ.get(

@@ -6,9 +6,21 @@ from app.providers import (
 )
 
 
-def test_factory_default_local(monkeypatch):
+def test_factory_default_omniroute(monkeypatch):
+    # El proveedor por defecto de I.L.U. es OmniRoute (con fallback local
+    # en create_runtime_provider); sin variable, se elige OmniRoute.
     monkeypatch.delenv("ILU_AI_PROVIDER", raising=False)
-    assert isinstance(create_provider(), LocalProvider)
+    assert isinstance(create_provider(), OmniRouteProvider)
+
+
+def test_factory_default_runtime_omniroute(monkeypatch):
+    # create_runtime_provider envuelve OmniRoute con fallback local.
+    from app.providers import FallbackProvider, create_runtime_provider
+    monkeypatch.delenv("ILU_AI_PROVIDER", raising=False)
+    provider = create_runtime_provider()
+    assert isinstance(provider, FallbackProvider)
+    assert provider.primary.name == "omniroute"
+    assert provider.fallback.name == "ollama"
 
 
 def test_factory_local(monkeypatch):

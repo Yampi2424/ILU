@@ -305,13 +305,14 @@ class OmniRouteProvider(AIProvider):
             "http://localhost:20128/v1"
         ).rstrip("/")
 
-        # La clave viaja exclusivamente por variables de entorno.
-        # Se admite ILU_OMNIROUTE_API_KEY (especificada) con
-        # OMNIROUTE_API_KEY como respaldo para entornos actuales.
+        # La clave se lee por variables de entorno o, si no, del archivo
+        # local gitignored security/omniroute.key (mismo patrón que
+        # device.key / owner.pin). Jamás se registra en logs ni errores.
+        # Precedencia: ILU_OMNIROUTE_API_KEY > OMNIROUTE_API_KEY > archivo.
         self.api_key = (
             os.environ.get("ILU_OMNIROUTE_API_KEY")
             or os.environ.get("OMNIROUTE_API_KEY")
-            or ""
+            or self._key_from_file()
         )
 
         # F-2: timeout configurable (antes fijo en 600s).
@@ -321,6 +322,18 @@ class OmniRouteProvider(AIProvider):
                 "600"
             )
         )
+
+    def _key_from_file(self):
+        try:
+            with open(
+                "security/omniroute.key",
+                "r",
+                encoding="utf-8"
+            ) as handle:
+                key = handle.read().strip()
+        except OSError:
+            return ""
+        return key or ""
 
     def _auth_headers(self):
         return {
@@ -332,9 +345,9 @@ class OmniRouteProvider(AIProvider):
             return {
                 "type": "error",
                 "content": (
-                    "I.L.U. no puede usar OmniRoute: la variable "
-                    "de entorno ILU_OMNIROUTE_API_KEY no está "
-                    "configurada."
+                    "I.L.U. no puede usar OmniRoute: no hay clave "
+                    "configurada (ILU_OMNIROUTE_API_KEY o "
+                    "security/omniroute.key)."
                 ),
                 "detail": "missing_api_key"
             }
@@ -444,7 +457,7 @@ class CloudProvider(AIProvider):
 def create_provider():
     provider_name = os.environ.get(
         "ILU_AI_PROVIDER",
-        "local"
+        "omniroute"
     ).lower()
 
     if provider_name == "omniroute":
@@ -531,14 +544,15 @@ def create_runtime_provider():
     """
     Proveedor que I.L.U. usa en ejecución.
 
-    Igual que `create_provider()`, salvo que con `ILU_AI_PROVIDER=omniroute`
-    devuelve un `FallbackProvider(OmniRoute, Local)`: si el cloud falla,
-    cae en Ollama local. Para `local`/`cloud`/desconocido devuelve lo mismo
-    que `create_provider()` (sin envolver).
+    Igual que `create_provider()`, salvo que con el proveedor `omniroute`
+    (el DEFAULT de I.L.U.) devuelve un `FallbackProvider(OmniRoute, Local)`:
+    si OmniRoute falla o no tiene clave, cae en Ollama local. Para
+    `local`/`cloud`/desconocido devuelve lo mismo que `create_provider()`
+    (sin envolver).
     """
     provider_name = os.environ.get(
         "ILU_AI_PROVIDER",
-        "local"
+        "omniroute"
     ).lower()
 
     if provider_name == "omniroute":

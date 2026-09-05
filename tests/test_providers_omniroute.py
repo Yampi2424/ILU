@@ -35,7 +35,10 @@ def make_provider(monkeypatch, api_key="clave-secreta"):
     return OmniRouteProvider()
 
 
-def test_missing_key_never_calls_network(monkeypatch):
+def test_missing_key_never_calls_network(monkeypatch, tmp_path):
+    # Se aísla el cwd: sin la variable Y sin security/omniroute.key a la
+    # vista no hay clave (hermético aunque el repo local tenga la suya).
+    monkeypatch.chdir(tmp_path)
     provider = make_provider(monkeypatch, api_key=None)
 
     with mock.patch("app.providers.requests.post") as post:
@@ -47,6 +50,47 @@ def test_missing_key_never_calls_network(monkeypatch):
 
     # Sin clave jamás se hace una petición a la red.
     post.assert_not_called()
+
+
+def test_api_key_reads_from_local_file(monkeypatch, tmp_path):
+    # Sin variables de entorno, la clave se lee del archivo gitignored
+    # security/omniroute.key (mismo patrón que device.key / owner.pin).
+    monkeypatch.delenv("ILU_OMNIROUTE_API_KEY", raising=False)
+    monkeypatch.delenv("OMNIROUTE_API_KEY", raising=False)
+    key_dir = tmp_path / "security"
+    key_dir.mkdir()
+    (key_dir / "omniroute.key").write_text(
+        "clave-del-archivo\n",
+        encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ILU_OMNIROUTE_MODEL", "modelo-test")
+    monkeypatch.setenv("ILU_OMNIROUTE_URL", "http://omniroute.test/v1")
+
+    provider = OmniRouteProvider()
+
+    assert provider.api_key == "clave-del-archivo"
+
+
+def test_api_key_env_wins_over_file(monkeypatch, tmp_path):
+    # La variable de entorno tiene precedencia sobre el archivo local.
+    monkeypatch.setenv(
+        "ILU_OMNIROUTE_API_KEY",
+        "clave-por-entorno"
+    )
+    key_dir = tmp_path / "security"
+    key_dir.mkdir()
+    (key_dir / "omniroute.key").write_text(
+        "clave-del-archivo",
+        encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("ILU_OMNIROUTE_MODEL", "modelo-test")
+    monkeypatch.setenv("ILU_OMNIROUTE_URL", "http://omniroute.test/v1")
+
+    provider = OmniRouteProvider()
+
+    assert provider.api_key == "clave-por-entorno"
 
 
 def test_omniroute_text_and_auth(monkeypatch):

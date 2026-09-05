@@ -27,7 +27,7 @@ def test_defaults(monkeypatch):
 
     assert settings.name == "I.L.U."
     assert settings.version == "0.8.0"
-    assert settings.provider == "local"
+    assert settings.provider == "omniroute"
     assert settings.environment == "production"
     assert settings.memory_mode == "auto"
     assert settings.database_url is None

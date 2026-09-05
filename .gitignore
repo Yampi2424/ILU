@@ -57,4 +57,5 @@ security/emergency.json
 security/devices.json
 security/device.key
 security/owner.pin
+security/omniroute.key
 security/requests.jsonl

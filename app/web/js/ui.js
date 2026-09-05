@@ -408,6 +408,23 @@ window.ILUUI = (function () {
     return pin || null;
   }
 
+  /**
+   * Devuelve la identidad raíz (owner_id) tal como la conoce el backend,
+   * para prefillarla en el prompt de "actor". Se cachea por sesión.
+   * Ej.: en este dispositivo es "owner". Así el owner no tiene que
+   * adivinar qué identidad usar: solo confirma la que viene precargada
+   * (o la cambia) y mete la clave.
+   */
+  let _ownerId = null;
+
+  async function _ownerActor() {
+    if (!_ownerId) {
+      const sec = await ILUApi.security();
+      if (!sec.error && sec.owner) _ownerId = sec.owner;
+    }
+    return _ownerId || 'owner';
+  }
+
   function _alertAdminError(result) {
     if (result && result.error === 'unauthorized') {
       // El servidor rechazó la credencial. La clave quedó cacheada en
@@ -424,7 +441,11 @@ window.ILUUI = (function () {
   }
 
   async function resolveAuth(requestId, decision, remember) {
-    const actor = prompt('Tu identidad (actor):');
+    const ownerId = await _ownerActor();
+    const actor = prompt(
+      'Tu identidad (actor):\n(el owner es: ' + ownerId + ')',
+      ownerId
+    );
     if (!actor) return;
 
     // La identidad por sí sola no alcanza: la acción admin demuestra
@@ -450,7 +471,11 @@ window.ILUUI = (function () {
   }
 
   async function changeAutonomy(level) {
-    const actor = prompt('Tu identidad (actor):');
+    const ownerId = await _ownerActor();
+    const actor = prompt(
+      'Tu identidad (actor):\n(el owner es: ' + ownerId + ')',
+      ownerId
+    );
     if (!actor) return;
 
     const pin = _ownerPin();

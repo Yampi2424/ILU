@@ -30,12 +30,16 @@ WEB_DIR = os.path.join(os.path.dirname(__file__), "web")
 #
 # Las rutas que conceden permisos, cambian la autonomía o resuelven
 # solicitudes de autorización son acciones de AUTORIDAD: solo el owner
-# (y quienes poseen el token de este dispositivo) pueden invocarlas.
+# puede invocarlas, demostrando UNA de dos credenciales:
+#   - el token de dispositivo (security/device.key, gitignored, generado
+#     en el primer arranque), la credencial de la MÁQUINA; o
+#   - el secreto del owner (security/owner.pin / ILU_OWNER_SECRET), el
+#     MISMO PIN que la concesión por voz/texto, la credencial de la
+#     PERSONA.
 #
-# El token se guarda en security/device.key (gitignored) y se genera en
-# el primer arranque. Protege la interfaz HTTP cuando I.L.U. escucha en
-# 0.0.0.0: un actor de la red no puede escalar a root sin el token.
-# /ask y los archivos estáticos permanecen abiertos para el uso normal.
+# Las dos credenciales se guardan en claro local (gitignored) y no se
+# exponen jamás en logs, auditorías ni respuestas HTTP. /ask y los
+# archivos estáticos permanecen abiertos para el uso normal.
 
 
 def _load_or_create_token(path):
@@ -327,29 +331,56 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def _authorized(self):
         """
-        True si el request demuestra posesión del token de dispositivo.
+        ¿El request demuestra una credencial de administración?
 
-        Se acepta el token por:
-          - cabecera 'Authorization: Bearer <token>'
-          - cabecera 'X-ILU-Token: <token>'
-          - query '?token=<token>'
+        Dos credenciales independientes; cualquiera de las dos es
+        suficiente:
 
-        La comparación es en tiempo constante (secrets.compare_digest)
-        para no filtrar el token por temporización.
+          1) Token de dispositivo (security/device.key), por la cabecera
+             'Authorization: Bearer <token>', 'X-ILU-Token: <token>' o
+             la query '?token=<token>'. Es la credencial de la MÁQUINA.
+          2) El secreto del owner (security/owner.pin o la variable
+             ILU_OWNER_SECRET) — el MISMO PIN que la concesión por
+             voz/texto — por la cabecera 'X-ILU-Pin: <secreto>'. Es la
+             credencial de la PERSONA.
+
+        Toda comparación es de tiempo constante (secrets.compare_digest)
+        y el valor de la clave jamás se loguea, se audita ni se devuelve.
+        Fail-closed: si el PIN no está configurado, el camino del PIN NO
+        autoriza (solo queda el token de dispositivo). Un PIN incorrecto
+        deja rastro en el audit como 'owner_secret_failed'.
         """
         header = self.headers.get("Authorization", "")
         if header.startswith("Bearer "):
-            provided = header[7:].strip()
+            provided_token = header[7:].strip()
         else:
-            provided = self.headers.get("X-ILU-Token", "")
+            provided_token = self.headers.get("X-ILU-Token", "")
 
-        if not provided:
-            provided = _query_params(self.path).get("token", "")
+        if not provided_token:
+            provided_token = _query_params(self.path).get("token", "")
 
-        if not provided or not DEVICE_TOKEN:
+        if provided_token and DEVICE_TOKEN:
+            if secrets.compare_digest(provided_token, DEVICE_TOKEN):
+                return True
+
+        # Camino del owner: el mismo secreto que usa la voz/texto,
+        # validado acá en código determinista (el modelo jamás lo ve).
+        provided_pin = self.headers.get("X-ILU-Pin", "")
+
+        if provided_pin and core.owner_secret.configured:
+            if core.owner_secret.matches(provided_pin):
+                return True
+
+            # Se deja rastro del intento fallido; sin exponer el valor.
+            core.audit.record(
+                action="owner_secret_failed",
+                reason="wrong_pin",
+                method="http_x_ilu_pin",
+                decision="deny",
+            )
             return False
 
-        return secrets.compare_digest(provided, DEVICE_TOKEN)
+        return False
 
     def _send_file(self, relative_path):
         """
@@ -656,20 +687,24 @@ class ILUHandler(BaseHTTPRequestHandler):
             "error": "not_found"
         })
 
-    def _require_device_token(self):
-        """Envía 401 si el request no demuestra el token de dispositivo."""
+    def _require_admin_auth(self):
+        """Envía 401 si el request no demuestra una credencial
+        administrativa (token de dispositivo o clave del owner)."""
         if not self._authorized():
             self.send_json(401, {
                 "success": False,
                 "error": "unauthorized",
-                "message": "Se requiere el token de dispositivo para esta acción."
+                "message": (
+                    "Se requiere autenticación de administrador "
+                    "(token de dispositivo o clave del owner)."
+                )
             })
             return False
         return True
 
     def _grant(self):
         """Concede un permiso. Authority valida que el actor sea raíz."""
-        if not self._require_device_token():
+        if not self._require_admin_auth():
             return
 
         try:
@@ -724,7 +759,7 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def _resolve_authorization_request(self, request_id):
         """Concede o deniega una solicitud abierta (solo un raíz)."""
-        if not self._require_device_token():
+        if not self._require_admin_auth():
             return
 
         try:
@@ -788,7 +823,7 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def _change_autonomy(self):
         """Cambia el nivel de autonomía (solo un principal raíz)."""
-        if not self._require_device_token():
+        if not self._require_admin_auth():
             return
 
         try:
@@ -971,7 +1006,7 @@ class ILUHandler(BaseHTTPRequestHandler):
         ):
             # Bloque 10: resetear el historial de una sesión.
             # Borrar datos es una acción destructiva: requiere el token.
-            if not self._require_device_token():
+            if not self._require_admin_auth():
                 return
 
             session_id = segments[1]

@@ -392,9 +392,45 @@ window.ILUUI = (function () {
     }
   }
 
+  /**
+   * Devuelve el PIN del owner para esta sesión de navegador. Si todavía
+   * no está cargado, lo pide por prompt y lo guarda en sessionStorage
+   * (NO persiste entre sesiones). Es el MISMO secreto de la concesión
+   * por voz/texto; la clave jamás se envía al modelo.
+   */
+  function _ownerPin() {
+    let pin = ILUApi.getPin();
+    if (!pin) {
+      pin = prompt('Clave de autorización (PIN del owner):');
+      if (pin) pin = String(pin).trim();
+      if (pin) ILUApi.setPin(pin);
+    }
+    return pin || null;
+  }
+
+  function _alertAdminError(result) {
+    if (result && result.error === 'unauthorized') {
+      // El servidor rechazó la credencial. La clave quedó cacheada en
+      // sessionStorage; se invalida para que el próximo intento vuelva
+      // a pedirla (en vez de reenviar la clave rechazada en bucle).
+      if (ILUApi.hasPin()) ILUApi.setPin('');
+      alert(
+        'No autorizado. Configurá el token de dispositivo (F12 → Consola → '
+        + "ILUApi.setToken('…')) o la clave del owner (ILUApi.setPin('…'))."
+      );
+    } else {
+      alert('Error: ' + ((result && result.error) || 'desconocido'));
+    }
+  }
+
   async function resolveAuth(requestId, decision, remember) {
     const actor = prompt('Tu identidad (actor):');
     if (!actor) return;
+
+    // La identidad por sí sola no alcanza: la acción admin demuestra
+    // también el secreto del owner (igual que la voz/texto).
+    const pin = _ownerPin();
+    if (!pin) return;
 
     const result = await ILUApi.resolveAuthRequest(
       requestId,
@@ -409,7 +445,7 @@ window.ILUUI = (function () {
     if (result.success) {
       _loadPermissions();
     } else {
-      alert('Error: ' + (result.error || 'desconocido'));
+      _alertAdminError(result);
     }
   }
 
@@ -417,13 +453,16 @@ window.ILUUI = (function () {
     const actor = prompt('Tu identidad (actor):');
     if (!actor) return;
 
+    const pin = _ownerPin();
+    if (!pin) return;
+
     const result = await ILUApi.changeAutonomy(actor, level);
 
     if (result.success) {
       _loadPermissions();
       updateModeBadge(level);
     } else {
-      alert('Error: ' + (result.error || 'desconocido'));
+      _alertAdminError(result);
     }
   }
 

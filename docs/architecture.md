@@ -737,8 +737,9 @@ Dos pedidos del usuario (creador de I.L.U.):
      default `security/owner.pin`).
    - `app/core.py` → `_authority_command` (solo el flujo `grant_prefixes`):
      extrae el PIN con `re.findall(r"\b\d{6}\b", message)`, lo REMUEVE del
-     `target` antes de parsear la capacidad (soporta "autoriza run_command
-     240890" y "autoriza con clave 240890 run_command") y aplica el gate:
+     `target` antes de parsear la capacidad (el PIN puede ir al final o
+     antepuesto por "autoriza con clave", v. ej. en los tests, donde el
+     valor se inyecta desde `ILU_OWNER_SECRET`) y aplica el gate:
 
      1. `capability_prohibited` PRIMERO y sin clave (a quien intenta
         "autoriza shell" se le rechaza idéntico a antes, sin pedir nada).
@@ -754,11 +755,41 @@ Dos pedidos del usuario (creador de I.L.U.):
 
 ### Alcance (qué NO cambió)
 
-- La UI web sigue autenticando con el token de dispositivo
-  (`security/device.key`), que NO es 240890.
+- La jerarquía de seguridad queda intacta: conceder, revocar, cambiar
+  autonomía y resolver solicitudes siguen exigiendo que el ACTOR sea la
+  raíz (`owner`). El PIN prueba identidad de la persona; no confiere root
+  a nadie que no lo sea.
+- El token de dispositivo (`security/device.key`) sigue siendo una
+  credencial válida de la máquina para la interfaz web (defensa en
+  profundidad; no se eliminó ningún control).
 - Cambiar autonomía y revocar permisos por NL siguen exigiendo principal
   raíz SIN PIN (se puede ampliar a pedido; queda documentado como límite).
 - El modelo no conoce la clave y no la puede revelar ni confirmar.
+
+### Mismo secreto del owner en la web (unificación)
+
+Desde el arranque de la interfaz HTTP, las rutas de autoridad (conceder
+permisos, resolver solicitudes, cambiar autonomía, borrar conversaciones)
+aceptan **el mismo secreto del owner** que usa la concesión por
+voz/texto, además del token de dispositivo:
+
+- Web (`app/web/js/ui.js` + `api.js`): las acciones admin piden la
+  identidad (actor, `owner`) Y el PIN; el PIN se guarda en `sessionStorage`
+  (NO persiste entre sesiones del navegador) y viaja en la cabecera
+  `X-ILU-Pin`. `ILUApi.setPin(...)` lo configura desde la consola.
+- Server (`app/__main__.py::_authorized`): devuelve verdadero si el
+  request demuestra el token de dispositivo **o** el PIN del owner. El PIN
+  se valida con `OwnerSecret.matches` (tiempo constante); un PIN
+  incorrecto deja `owner_secret_failed` con `reason=wrong_pin`,
+  `method=http_x_ilu_pin`.
+- **Fail-closed**: si el PIN no está configurado, el camino del PIN no
+  autoriza; queda solo el token de dispositivo. El valor del secreto jamás
+  aparece en logs, auditorías, errores ni respuestas HTTP.
+
+Causa del "unauthorized" histórico: el gate web exigía el token de
+dispositivo en el navegador ANTES de evaluar al actor, así que "owner" no
+podía pasar aunque fuera la identidad correcta. Al habilitar el PIN como
+credencial de persona, la interfaz acepta `owner` + clave.
 
 ### Verificación
 
@@ -766,9 +797,16 @@ Dos pedidos del usuario (creador de I.L.U.):
 - `pytest` selectivo: `test_owner_secret`, `test_creator_identity`,
   `test_core_authorization_nl`, `test_identity`, `test_principal` + regresiva
   de seguridad (`test_security_gate_grants`, `test_authority`).
-- Smoke HTTP (stores en tmp, `ILU_OWNER_SECRET=240890`): "autoriza
-  run_command" pide clave y NO concede; "... 240890" concede; "... 111111"
-  deniega y deja `owner_secret_failed` en el audit.
+- Smoke HTTP (stores en tmp, clave por entorno `ILU_OWNER_SECRET`): el
+  mensaje de concesión sin clave pide la clave y NO concede; con la clave
+  correcta concede; con una clave incorrecta deniega y deja
+  `owner_secret_failed` en el audit. (La clave se carga del mecanismo
+  seguro; su valor no se documenta.)
+- Smoke web: `POST /grants` con `X-ILU-Pin` (la clave del owner cargada
+  del mecanismo seguro) y `actor=owner` concede; con una clave inválida
+  devuelve `unauthorized` y queda `owner_secret_failed` (method
+  `http_x_ilu_pin`) en el audit; con la clave válida pero actor no-root
+  devuelve `403 no_autoridad_raiz`.
 - **Contrato de awareness en respuestas de herramientas.** En una suite
   E2E con el proveedor real apareció una falla intermitente:
   `test_awareness_injected_into_response` a veces fallaba porque el modelo

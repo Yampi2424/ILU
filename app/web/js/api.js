@@ -13,20 +13,32 @@ window.ILUApi = (function () {
 
   const BASE = '';
   const TOKEN_KEY = 'ilu_device_token';
+  const PIN_KEY = 'ilu_owner_pin';
 
   /**
-   * Cabecera de autorización del dispositivo.
+   * Cabeceras de autorización.
+   *
+   * - El token de dispositivo (X-ILU-Token) protege la MÁQUINA: el owner
+   *   lo configura con ILUApi.setToken(); se guarda en localStorage.
+   * - El secreto del owner (X-ILU-Pin) es el MISMO PIN de la concesión
+   *   por voz/texto: se guarda en sessionStorage (NO persiste entre
+   *   sesiones del navegador) y solo se envía en las rutas
+   *   administrativas.
    *
    * Las rutas administrativas (grants, autonomía, resolución de
-   * solicitudes, borrado de conversaciones) requieren el token de
-   * dispositivo. El owner lo configura con ILUApi.setToken(); se guarda
-   * en localStorage y se envía en cada petición.
+   * solicitudes, borrado de conversaciones) aceptan cualquiera de las
+   * dos credenciales.
    */
-  function _authHeaders(extra) {
+  function _authHeaders(extra, includePin) {
     let headers = extra ? Object.assign({}, extra) : {};
     let token = null;
     try { token = window.localStorage.getItem(TOKEN_KEY); } catch (_) {}
     if (token) headers['X-ILU-Token'] = token;
+    if (includePin) {
+      let pin = null;
+      try { pin = window.sessionStorage.getItem(PIN_KEY); } catch (_) {}
+      if (pin) headers['X-ILU-Pin'] = pin;
+    }
     return headers;
   }
 
@@ -43,14 +55,14 @@ window.ILUApi = (function () {
     }
   }
 
-  async function _post(path, body) {
+  async function _post(path, body, includePin) {
     try {
       const response = await fetch(BASE + path, {
         method: 'POST',
         headers: _authHeaders({
           'Content-Type': 'application/json',
           'Accept': 'application/json'
-        }),
+        }, includePin),
         body: JSON.stringify(body)
       });
       return await response.json();
@@ -77,11 +89,11 @@ window.ILUApi = (function () {
     }
   }
 
-  async function _delete(path) {
+  async function _delete(path, includePin) {
     try {
       const response = await fetch(BASE + path, {
         method: 'DELETE',
-        headers: _authHeaders({ 'Accept': 'application/json' })
+        headers: _authHeaders({ 'Accept': 'application/json' }, includePin)
       });
       return await response.json();
     } catch (error) {
@@ -101,6 +113,20 @@ window.ILUApi = (function () {
     },
     hasToken: function () {
       try { return !!window.localStorage.getItem(TOKEN_KEY); } catch (_) { return false; }
+    },
+
+    // --- Secreto del owner (MISMO PIN de la concesión por voz/texto) ---
+    setPin: function (pin) {
+      try {
+        if (pin) window.sessionStorage.setItem(PIN_KEY, pin);
+        else window.sessionStorage.removeItem(PIN_KEY);
+      } catch (_) {}
+    },
+    getPin: function () {
+      try { return window.sessionStorage.getItem(PIN_KEY) || ''; } catch (_) { return ''; }
+    },
+    hasPin: function () {
+      try { return !!window.sessionStorage.getItem(PIN_KEY); } catch (_) { return false; }
     },
     // --- Estado ---
     healthz: function () { return _get('/healthz'); },
@@ -126,7 +152,10 @@ window.ILUApi = (function () {
     },
 
     resetConversation: function (sessionId) {
-      return _delete('/conversations/' + encodeURIComponent(sessionId || 'default'));
+      return _delete(
+        '/conversations/' + encodeURIComponent(sessionId || 'default'),
+        true
+      );
     },
 
     // --- Tareas ---
@@ -183,7 +212,8 @@ window.ILUApi = (function () {
       if (opts && opts.indefinite) body.indefinite = true;
       return _post(
         '/authorization-requests/' + encodeURIComponent(requestId),
-        body
+        body,
+        true
       );
     },
 
@@ -192,11 +222,11 @@ window.ILUApi = (function () {
         actor: actor,
         capability: capability,
         reason: reason || ''
-      });
+      }, true);
     },
 
     changeAutonomy: function (actor, level) {
-      return _post('/autonomy', { actor: actor, level: level });
+      return _post('/autonomy', { actor: actor, level: level }, true);
     }
   };
 })();

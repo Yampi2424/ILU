@@ -32,3 +32,6 @@ def ilu_local_stores(monkeypatch, tmp_path):
         str(tmp_path / "conversations.jsonl")
     )
     monkeypatch.setenv("ILU_WORKSPACE", str(tmp_path / "workspace"))
+    # Bloque 14: la memoria durable de I.L.U. (data.json) también se aísla,
+    # para que el bootstrap de identidad del creador no toque el repo real.
+    monkeypatch.setenv("ILU_MEMORY_PATH", str(tmp_path / "data.json"))

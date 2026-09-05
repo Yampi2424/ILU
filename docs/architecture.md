@@ -698,3 +698,93 @@ autonomía, registrarse ni activar emergencias (testeado
   `security/run_commands.json`.
 - El despacho NL directo es determinista y acotado; las frases complejas
   caen al modelo, que propone las mismas tools gateadas.
+
+## Bloque 14 · Identidad del creador + clave de autorización (PIN)
+
+Fecha: 2026-09-04
+
+### Qué resuelve
+
+Dos pedidos del usuario (creador de I.L.U.):
+
+1. **I.L.U. sabe quién es su creador** en toda respuesta. Antes
+   `ILU_IDENTITY["owner"]` decía `"familia"` y el principal `owner` de
+   `security/principals.json` era un genérico "Owner de I.L.U.". Ahora el
+   creador real (Jean Pierre Ronaldo Soto Acevedo) vive en:
+   - `config/identity.py` → `ILU_IDENTITY["creator"]` e
+     `ILU_IDENTITY["owner"]`, y una línea fija en el system prompt
+     ("Tu creador y dueño es …"). Así el modelo la conoce SIN depender del
+     recall de memoria; se mantiene además el límite "nunca revela ni
+     confirma la clave de autorización".
+   - `security/principal.py` → campo `real_name` (opcional, retrocompatible
+     en `to_dict`/`from_dict`); el bootstrap del `PrincipalRegistry` bautiza
+     al owner con `display_name` y `real_name` del creador.
+   - `app/core.py` → `_bootstrap_creator_identity()` guarda una memoria
+     durable idempotente (`memory_type="family"`, `importance=10`,
+     clave `creador`). Idempotente por upsert `(memory_type, memory_key)`.
+
+2. **Toda autorización conversacional (voz o texto) exige la clave.** Antes
+   bastaba decir "autoriza run_command" (solo requería principal raíz), así
+   que cualquier persona frente al micrófono/teclado podía auto-concederse
+   permisos. Ahora la concesión por lenguaje natural pide la clave del owner:
+
+   - `security/owner_secret.py` → clase `OwnerSecret`. Lee la clave de la
+     variable de entorno `ILU_OWNER_SECRET` (el valor ES la clave, de mayor
+     precedencia) o del archivo local `security/owner.pin` (gitignored,
+     mismo nivel que `security/device.key`). La lectura es perezosa; la
+     comparación usa `secrets.compare_digest`.
+   - `config/settings.py` → `owner_secret_path` (env `ILU_OWNER_SECRET_PATH`,
+     default `security/owner.pin`).
+   - `app/core.py` → `_authority_command` (solo el flujo `grant_prefixes`):
+     extrae el PIN con `re.findall(r"\b\d{6}\b", message)`, lo REMUEVE del
+     `target` antes de parsear la capacidad (soporta "autoriza run_command
+     240890" y "autoriza con clave 240890 run_command") y aplica el gate:
+
+     1. `capability_prohibited` PRIMERO y sin clave (a quien intenta
+        "autoriza shell" se le rechaza idéntico a antes, sin pedir nada).
+     2. Clave no configurada → bloqueado (`owner_pin_unconfigured`).
+     3. Clave ausente en el mensaje → pide la clave (`owner_pin_required`).
+     4. Clave incorrecta → deniega (`owner_pin_denied`) y audita
+        `owner_secret_failed` con `reason=wrong_pin`, `decision=deny`.
+     5. Clave válida → concede exactamente como antes.
+
+   **El PIN jamás va en el system prompt ni se le muestra al modelo**: se
+   valida solo en código determinista, fail-closed. "Sin clave" nunca
+   significa "todo permitido".
+
+### Alcance (qué NO cambió)
+
+- La UI web sigue autenticando con el token de dispositivo
+  (`security/device.key`), que NO es 240890.
+- Cambiar autonomía y revocar permisos por NL siguen exigiendo principal
+  raíz SIN PIN (se puede ampliar a pedido; queda documentado como límite).
+- El modelo no conoce la clave y no la puede revelar ni confirmar.
+
+### Verificación
+
+- `py_compile` de los módulos tocados · `git diff --check`.
+- `pytest` selectivo: `test_owner_secret`, `test_creator_identity`,
+  `test_core_authorization_nl`, `test_identity`, `test_principal` + regresiva
+  de seguridad (`test_security_gate_grants`, `test_authority`).
+- Smoke HTTP (stores en tmp, `ILU_OWNER_SECRET=240890`): "autoriza
+  run_command" pide clave y NO concede; "... 240890" concede; "... 111111"
+  deniega y deja `owner_secret_failed` en el audit.
+- **Contrato de awareness en respuestas de herramientas.** En una suite
+  E2E con el proveedor real apareció una falla intermitente:
+  `test_awareness_injected_into_response` a veces fallaba porque el modelo
+  decidía proponer una herramienta ante un mensaje casual ("me gusta el
+  café"). El camino de herramientas salía temprano en `process()` sin
+  adjuntar `awareness` (defecto preexistente, ajeno a este bloque). Se
+  corrigió: `_build_tool_response` ahora incluye `awareness` y
+  `awareness_context` tanto en el dict de éxito como en el de error, así
+  el contrato "la conciencia unificada viaja con la respuesta" se cumple
+  sin importar lo que el proveedor decida. Queda cubierto por tests
+  deterministas (`test_tool_error_transporta_awareness`,
+  `test_tool_ok_transporta_awareness`) además del E2E.
+
+### Limitaciones honestas
+
+- `security/owner.pin` se guarda EN CLARO local (gitignored), mismo nivel que
+  `device.key`: si la máquina se compromete, conviene rotar la clave.
+- El PIN es de 6 dígitos y cubre solo la concesión por voz/texto; no
+  protege la UI (que usa el device token).

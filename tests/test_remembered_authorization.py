@@ -174,6 +174,8 @@ def test_resolve_remembered_grant_still_revocable(tmp_path):
 
 @pytest.fixture
 def core(monkeypatch):
+    """Core aislado con la clave del owner configurada (Bloque 14)."""
+    monkeypatch.setenv("ILU_OWNER_SECRET", "240890")
     instance = ILUCore()
     instance._save_memory = lambda *args, **kwargs: None
     return instance
@@ -181,7 +183,7 @@ def core(monkeypatch):
 
 def test_nl_single_use_is_default(core):
     # Sin "siempre"/"recuerda": menor privilegio, UN solo uso.
-    result = core._authority_command("autoriza write_file")
+    result = core._authority_command("autoriza write_file 240890")
 
     assert result["intent"] == "permission_granted"
     grant = core.grant_store.get(result["grant"]["grant_id"])
@@ -191,7 +193,7 @@ def test_nl_single_use_is_default(core):
 
 
 def test_nl_autoriza_siempre_is_remembered(core):
-    result = core._authority_command("autoriza siempre write_file")
+    result = core._authority_command("autoriza siempre write_file 240890")
 
     assert result["intent"] == "permission_granted"
     assert result["grant"]["indefinite"] is True
@@ -203,7 +205,7 @@ def test_nl_autoriza_siempre_is_remembered(core):
 
 
 def test_nl_recuerda_que_puedes_is_remembered(core):
-    result = core._authority_command("recuerda que puedes notify")
+    result = core._authority_command("recuerda que puedes notify 240890")
 
     assert result["intent"] == "permission_granted"
     grant = core.grant_store.get(result["grant"]["grant_id"])
@@ -212,7 +214,7 @@ def test_nl_recuerda_que_puedes_is_remembered(core):
 
 
 def test_nl_remembered_grant_auto_approves_second_ask(core):
-    core._authority_command("autoriza siempre notify")
+    core._authority_command("autoriza siempre notify 240890")
 
     gate = SecurityGate("assisted")
     decision = gate.decide(
@@ -224,7 +226,7 @@ def test_nl_remembered_grant_auto_approves_second_ask(core):
 
 def test_nl_remembered_still_level_execution(core):
     # Nunca se delega autoridad por lenguaje natural, ni recordando.
-    result = core._authority_command("autoriza siempre write_file")
+    result = core._authority_command("autoriza siempre write_file 240890")
     assert result["grant"]["level"] == "execution"
 
 
@@ -235,7 +237,7 @@ def test_nl_recuerda_without_permission_target_ignored(core):
 
 
 def test_nl_remembered_can_be_revoked(core):
-    core._authority_command("autoriza siempre write_file")
+    core._authority_command("autoriza siempre write_file 240890")
     result = core._authority_command("revoca write_file")
 
     assert result["intent"] == "permission_revoked"

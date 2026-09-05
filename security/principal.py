@@ -41,7 +41,8 @@ class Principal:
         verification_method="credential",
         verification_strength="high",
         device_id=None,
-        public_key=None
+        public_key=None,
+        real_name=None
     ):
         if principal_type not in VALID_TYPES:
             raise ValueError("invalid_principal_type")
@@ -49,6 +50,8 @@ class Principal:
         self.principal_id = principal_id
         self.principal_type = principal_type
         self.display_name = display_name or principal_id
+        # Nombre real de la persona (Bloque 14: identidad del creador).
+        self.real_name = real_name
         # Método de verificación actual; futuro: voz/cámara/biometría.
         self.verification_method = verification_method
         self.verification_strength = verification_strength
@@ -71,6 +74,7 @@ class Principal:
             },
             "device_id": self.device_id,
             "public_key": self.public_key,
+            "real_name": self.real_name,
             "registered_at": self.registered_at,
         }
 
@@ -88,6 +92,7 @@ class Principal:
             ),
             device_id=data.get("device_id"),
             public_key=data.get("public_key"),
+            real_name=data.get("real_name"),
         )
         principal.registered_at = data.get("registered_at")
         return principal
@@ -156,13 +161,23 @@ class PrincipalRegistry:
     # ------------------------------------------------------------------
 
     def bootstrap(self):
-        """Crea el owner en el primer arranque (bootstrap de confianza)."""
+        """Crea el owner en el primer arranque (bootstrap de confianza).
+
+        El owner se bautiza con el nombre real del creador (identidad del
+        Bloque 14), no como un genérico "Owner de I.L.U.".
+        """
         if not self.principals:
             import time
+
+            from config.identity import ILU_IDENTITY
+
+            creator = ILU_IDENTITY.get("creator") or "Owner de I.L.U."
+
             owner = Principal(
                 principal_id=self.owner_id,
                 principal_type="owner",
-                display_name="Owner de I.L.U.",
+                display_name=creator,
+                real_name=creator,
             )
             owner.registered_at = time.strftime(
                 "%Y-%m-%dT%H:%M:%SZ",

@@ -148,6 +148,15 @@ class ILUSettings:
             "security/device.key"
         )
 
+        # ---- Bloque 14: clave de autorización del owner (PIN) ----
+        # Ruta del archivo local con la clave (gitignored). La variable
+        # ILU_OWNER_SECRET, si existe, contiene la clave directamente y
+        # tiene precedencia (se puede usar sin crear el archivo).
+        self.owner_secret_path = os.environ.get(
+            "ILU_OWNER_SECRET_PATH",
+            "security/owner.pin"
+        )
+
     @property
     def is_cloud(self):
         return self.environment == "production"

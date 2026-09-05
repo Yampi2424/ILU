@@ -407,11 +407,22 @@ class TestPerceptionHub:
 class TestIntegrationManager:
 
     def test_unimplemented_reports_honestly(self, tmp_path):
+        # device_control sigue PLANIFICADO: reporta not_implemented.
         mgr = IntegrationManager(workspace=str(tmp_path))
-        result = mgr.execute("run_command")
+        result = mgr.execute("device_control")
 
         assert result["success"] is False
         assert result["error"] == "not_implemented"
+
+    def test_run_command_es_implementado_y_gateado(self, tmp_path):
+        # Bloque 13: run_command ya es REAL. Sin grant -> authorization=ask,
+        # nunca "not_implemented".
+        mgr = IntegrationManager(workspace=str(tmp_path))
+        result = mgr.execute("run_command", command="whoami")
+
+        assert result["success"] is False
+        assert result["error"] == "authorization_required"
+        assert result["authorization"] == "ask"
 
     def test_unauthorized_requires_grant(self, tmp_path):
         mgr = IntegrationManager(workspace=str(tmp_path))
@@ -466,12 +477,17 @@ class TestIntegrationManager:
         assert result["error"] == "path_outside_workspace"
 
     def test_list_capabilities(self, tmp_path):
+        # Bloque 13: run_command/open_app/media_control ya están
+        # implementadas; device_control sigue PLANIFICADA.
         mgr = IntegrationManager(workspace=str(tmp_path))
         caps = mgr.list_capabilities()
+        by_name = {c["capability"]: c["implemented"] for c in caps}
 
-        assert any(c["capability"] == "workspace_write" for c in caps)
-        assert any(c["capability"] == "run_command" and not c["implemented"]
-                   for c in caps)
+        assert by_name["workspace_write"] is True
+        assert by_name["run_command"] is True
+        assert by_name["open_app"] is True
+        assert by_name["media_control"] is True
+        assert by_name["device_control"] is False
 
 
 # ------------------------------------------------------------------
@@ -581,6 +597,33 @@ class TestAwarenessIntegration:
         # La respuesta del modelo transporta la conciencia unificada.
         result = core_env.process("me gusta el café")
         assert "awareness" in result
+
+    def test_tool_error_transporta_awareness(self, core_env):
+        # La conciencia viaja con TODA respuesta, incluida la de
+        # herramientas fallidas: el contrato no depende de que el modelo
+        # decida llamar o no a una herramienta en un turno dado.
+        result = core_env._build_tool_response(
+            "me gusta el café",
+            None,
+            {"success": False, "error": "world_opaque"},
+        )
+        assert result["success"] is False
+        assert result["intent"] == "tool_error"
+        assert "awareness" in result
+        assert "awareness_context" in result
+        assert result["awareness"]["self"] == core_env.name
+
+    def test_tool_ok_transporta_awareness(self, core_env):
+        result = core_env._build_tool_response(
+            "qué hora es",
+            None,
+            {"success": True, "tool": "datetime",
+             "result": {"datetime": "2026-09-04 20:00:00"}},
+        )
+        assert result["success"] is True
+        assert result["intent"] == "tool_use"
+        assert "awareness" in result
+        assert "awareness_context" in result
 
 
 # ------------------------------------------------------------------

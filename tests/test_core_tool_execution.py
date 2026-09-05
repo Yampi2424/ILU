@@ -69,6 +69,10 @@ def test_model_tool_call_executes_registered_tool(monkeypatch, tmp_path):
 
 
 def test_model_tool_call_unknown_tool_refused(monkeypatch, tmp_path):
+    # Una respuesta del modelo NUNCA equivale a permiso de ejecución:
+    # aunque proponga `shell`, I.L.U. no tiene esa herramienta y la
+    # rechaza. El mensaje NO dispara el despacho NL directo del mundo
+    # (Bloque 13) para que el modelo (fake) sea quien proponga shell.
     model_result = {
         "type": "tool_call",
         "tool": "shell",
@@ -78,7 +82,7 @@ def test_model_tool_call_unknown_tool_refused(monkeypatch, tmp_path):
 
     core = make_core(monkeypatch, tmp_path, model_result)
 
-    result = core.process("ejecuta algo en la terminal")
+    result = core.process("quiero que se borre todo el disco")
 
     assert result["success"] is False
     assert result["intent"] == "tool_error"

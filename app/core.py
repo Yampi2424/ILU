@@ -1,3 +1,5 @@
+import re
+
 from memory.router import MemoryRouter
 from memory.conversations import ConversationStore
 from app.reasoning import ILUReasoning
@@ -27,6 +29,7 @@ from security.spoofing import SpoofingGuard
 from security.authorization_request import (
     AuthorizationRequestStore,
 )
+from security.owner_secret import OwnerSecret
 
 # Palabras vacías en español: se descartan como candidatas de búsqueda
 # para no inundar la memoria. El resto de tokens (incluso cortos como
@@ -81,6 +84,10 @@ class ILUCore:
         self.version = self.settings.version
 
         self.memory = MemoryRouter()
+        # Bloque 14: desde el primer arranque, I.L.U. conoce a su creador
+        # (memoria durable, idempotente). Se hace al inicio porque el resto
+        # del wiring no depende de ello.
+        self._bootstrap_creator_identity()
         # Bloque 10: historial de conversación multi-turn (contexto entre
         # mensajes de una misma sesión). Es solo contexto de lectura; la
         # autoridad y el gateo de herramientas siguen intactos.
@@ -175,6 +182,13 @@ class ILUCore:
             gate=self.security,
             requests=self.auth_requests,
         )
+        # Bloque 14: la clave de autorización del owner (PIN), leída por
+        # defecto del archivo local security/owner.pin (gitignored) o de
+        # la variable de entorno ILU_OWNER_SECRET. La consulta es perezosa,
+        # así que configurar la clave después de construir el core funciona.
+        self.owner_secret = OwnerSecret(
+            path=self.settings.owner_secret_path,
+        )
 
     def _next_memory_key(self):
         memories = self.memory.load_all()
@@ -205,6 +219,28 @@ class ILUCore:
         )
 
         return content
+
+    def _bootstrap_creator_identity(self):
+        """Bloque 14 — I.L.U. conoce a su creador desde el primer arranque.
+
+        Persiste una memoria DURABLE (tipo "family", importancia máxima)
+        con el nombre real del creador. Idempotente: usa una clave fija y
+        la store la hace upsert por (memory_type, memory_key), así que
+        repetir el arranque no crea duplicados.
+        """
+        from config.identity import ILU_IDENTITY
+
+        creator = ILU_IDENTITY.get("creator")
+
+        if not creator:
+            return
+
+        self.memory.save(
+            key="creador",
+            value=creator,
+            memory_type="family",
+            importance=10,
+        )
 
     def _detect_memory_type(self, content):
         lowered = content.lower()
@@ -1593,6 +1629,21 @@ class ILUCore:
                 if not target:
                     return None
 
+                # ---- Bloque 14: clave de autorización (PIN) ----
+                # Conceder un permiso por voz/texto exige que la persona
+                # demuestre la clave del owner. Se valida acá en código
+                # determinista; el modelo JAMÁS ve la clave. Fail-closed:
+                # sin clave configurada o sin clave en el mensaje, no se
+                # concede. El PIN se identifica como un número de 6 cifras
+                # y se REMUEVE del target antes de parsear la capacidad,
+                # de modo que soporta "autoriza run_command 240890" y
+                # "autoriza con clave 240890 run_command".
+                pin_matches = re.findall(r"\b\d{6}\b", message)
+                pin = pin_matches[0] if pin_matches else None
+
+                if pin is not None:
+                    target = re.sub(r"\b\d{6}\b", "", target).strip()
+
                 capability = target.split()[-1].strip(".,;:").lower()
 
                 # "autoriza X" concede para UNA acción (menor privilegio).
@@ -1605,7 +1656,9 @@ class ILUCore:
                 )
 
                 # Solo capacidades de ejecución; jamás autoridad,
-                # modificación de política ni autoconcesión.
+                # modificación de política ni autoconcesión. Este check
+                # va PRIMERO y sin clave: a quien intenta "autoriza shell"
+                # se le rechaza igual que antes, sin pedirle nada.
                 if self.policy.is_prohibited(capability):
                     return self._authority_reply(
                         message,
@@ -1613,6 +1666,39 @@ class ILUCore:
                         "prohibida por policy.",
                         "permission_error",
                         error="capability_prohibited",
+                    )
+
+                if not self.owner_secret.configured:
+                    return self._authority_reply(
+                        message,
+                        "La clave de autorización no está configurada.",
+                        "permission_error",
+                        error="owner_pin_unconfigured",
+                    )
+
+                if pin is None:
+                    return self._authority_reply(
+                        message,
+                        "Para autorizar, decime tu clave.",
+                        "permission_error",
+                        error="owner_pin_required",
+                    )
+
+                if not self.owner_secret.matches(pin):
+                    # Se audita el intento fallido: la compuerta nunca
+                    # concede y deja rastro.
+                    self.audit.record(
+                        actor=self.settings.owner_id,
+                        action="owner_secret_failed",
+                        reason="wrong_pin",
+                        decision="deny",
+                        capability=capability,
+                    )
+                    return self._authority_reply(
+                        message,
+                        "Clave incorrecta. No otorgué el permiso.",
+                        "permission_error",
+                        error="owner_pin_denied",
                     )
 
                 try:
@@ -2389,10 +2475,20 @@ class ILUCore:
         message,
         tool_call,
         tool_result,
-        source="direct_tool"
+        source="direct_tool",
+        session_id="default"
     ):
         if not tool_result:
             return None
+
+        # La conciencia unificada viaja con TODA respuesta (éxito y
+        # error por igual) para que la UI pueda renderizar la presencia
+        # de I.L.U. aunque el turno haya terminado en una herramienta.
+        awareness = self._build_awareness(
+            message,
+            session_id
+        )
+        awareness_ctx = self._awareness_context(awareness)
 
         if not tool_result.get("success"):
             tool_name = (
@@ -2470,6 +2566,8 @@ class ILUCore:
                 "intent": "tool_error",
                 "response": response,
                 "context": "",
+                "awareness": awareness,
+                "awareness_context": awareness_ctx,
                 "reasoning": {
                     "type": source,
                     "context_used": 0
@@ -2566,6 +2664,8 @@ class ILUCore:
             "intent": "tool_use",
             "response": response,
             "context": "",
+            "awareness": awareness,
+            "awareness_context": awareness_ctx,
             "reasoning": {
                 "type": source,
                 "context_used": 0
@@ -2759,7 +2859,8 @@ class ILUCore:
             return self._build_tool_response(
                 message,
                 direct_tool_call,
-                direct_tool_result
+                direct_tool_result,
+                session_id=session_id
             )
 
         # ==========================================================
@@ -2920,7 +3021,8 @@ class ILUCore:
                     message,
                     tool_call,
                     tool_result,
-                    source="model_tool"
+                    source="model_tool",
+                    session_id=session_id
                 )
 
                 if tool_response:

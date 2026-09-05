@@ -56,4 +56,5 @@ security/principals.json
 security/emergency.json
 security/devices.json
 security/device.key
+security/owner.pin
 security/requests.jsonl

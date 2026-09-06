@@ -1,15 +1,12 @@
 /**
- * I.L.U. — Punto de entrada de la interfaz
+ * I.L.U. — Punto de entrada de la interfaz inmersiva
  *
  * Conecta el cliente API, el componente visual del Corazón,
- * la interfaz de usuario y la capa de voz. Gestiona el flujo de
- * conversación (texto y voz).
+ * la interfaz de usuario (dock + drawers), y la capa de voz.
+ * Flujo: streaming por SSE → fallback a /ask síncrono.
  *
- * PRINCIPIO: este módulo SOLO orquesta las capas visuales y transmite
- * órdenes al backend. NUNCA decide permisos ni ejecuta autoridad — esa
- * responsabilidad es del núcleo Python (ILUCore + Authority +
- * SecurityGate). La voz (ILUVoice) produce texto y reproduce texto por
- * el MISMO /ask, con las mismas reglas: nunca es un bypass.
+ * PRINCIPIO: este módulo SOLO orquesta capas visuales y transmite
+ * órdenes al backend. NUNCA decide permisos ni ejecuta autoridad.
  */
 
 (function () {
@@ -17,7 +14,9 @@
 
   let _sessionId = 'web-' + Date.now();
   let _sending = false;
-  let _voiceEngine = null;   // 'realtime' | 'legacy' | null
+  let _voiceEngine = null;
+  let _currentPanel = null;
+  let _pinResolve = null;  // Promise resolver for PIN modal
 
   // --- Inicialización -----------------------------------------------
 
@@ -28,14 +27,9 @@
     _loadSecurityState();
     _pollAuthorizationRequests();
     _pollPresence();
+    _restoreHistory();
   }
 
-  /**
-   * Prefiere el motor de voz EN TIEMPO REAL (realtime.js): micrófono
-   * real + VAD + visualización dual + TTS del backend + barge-in. Si el
-   * navegador no lo soporta (sin getUserMedia/AudioContext/Web Speech),
-   * cae al motor legado (voice.js, Web Speech puro).
-   */
   function _initVoice() {
     if (window.ILURealtime && ILURealtime.init()) {
       ILURealtime.setCallbacks({
@@ -53,7 +47,6 @@
       return;
     }
 
-    // Fallback: motor legado (Web Speech para STT y TTS).
     if (window.ILUVoice) {
       ILUVoice.init();
       ILUVoice.configure({ onTranscript: _sendVoiceText });
@@ -65,12 +58,8 @@
         onUnavailable: _onVoiceUnavailable,
         onModeChange: _onVoiceModeChange
       });
-
       _voiceEngine = 'legacy';
-
-      if (!ILUVoice.isAvailable()) {
-        _onVoiceUnavailable();
-      }
+      if (!ILUVoice.isAvailable()) _onVoiceUnavailable();
     }
   }
 
@@ -88,66 +77,53 @@
   function _toggleVoice() {
     if (_voiceEngine === 'realtime') {
       if (ILURealtime.isActive()) {
-        ILURealtime.stop();
-        _setMicUI('idle');
-      } else {
-        ILURealtime.start();
-      }
+        ILURealtime.stop(); _setMicUI('idle');
+      } else { ILURealtime.start(); }
       return;
     }
-    if (_voiceEngine === 'legacy' && window.ILUVoice) {
-      window.ILUVoice.toggle();
-    }
+    if (_voiceEngine === 'legacy' && window.ILUVoice) window.ILUVoice.toggle();
   }
 
   function _bindEvents() {
-    // Navegación
-    document.querySelectorAll('.topbar-btn[data-view]').forEach(function (btn) {
+    // Dock navigation
+    document.querySelectorAll('.dock-item[data-panel]').forEach(function (btn) {
       btn.addEventListener('click', function () {
-        ILUUI.switchView(btn.getAttribute('data-view'));
+        ILUUI.openDrawer(btn.getAttribute('data-panel'));
       });
     });
 
-    document.getElementById('sidebarToggle').addEventListener('click', function () {
-      ILUUI.toggleSidebar();
-    });
+    document.getElementById('panelDrawerClose').addEventListener('click', ILUUI.closeDrawer);
+    document.getElementById('panelDrawerOverlay').addEventListener('click', ILUUI.closeDrawer);
 
     // Chat
     var input = document.getElementById('chatInput');
     var sendBtn = document.getElementById('chatSend');
-
     sendBtn.addEventListener('click', _sendMessage);
-
     input.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) {
-        e.preventDefault();
-        _sendMessage();
-      }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); _sendMessage(); }
     });
-
-    // Auto-resize del textarea
     input.addEventListener('input', function () {
       this.style.height = 'auto';
       this.style.height = Math.min(this.scrollHeight, 120) + 'px';
     });
 
-    // Micrófono (voz)
+    // Micrófono
     var micBtn = document.getElementById('micButton');
-    if (micBtn) {
-      micBtn.addEventListener('click', _toggleVoice);
-    }
+    if (micBtn) micBtn.addEventListener('click', _toggleVoice);
 
-    // Panel modal
-    document.getElementById('panelClose').addEventListener('click', ILUUI.closePanel);
-    document.getElementById('panelOverlay').addEventListener('click', function (e) {
-      if (e.target === this) ILUUI.closePanel();
+    // PIN modal
+    document.getElementById('pinModalCancel').addEventListener('click', function () {
+      if (_pinResolve) _pinResolve(null);
     });
-
-    // Autonomía
-    document.querySelectorAll('#autonomyButtons .action-btn').forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        ILUUI.changeAutonomy(btn.getAttribute('data-level'));
-      });
+    document.getElementById('pinModalConfirm').addEventListener('click', function () {
+      var pin = document.getElementById('pinInput').value.trim();
+      if (_pinResolve) _pinResolve(pin);
+    });
+    document.getElementById('pinInput').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('pinModalConfirm').click();
+    });
+    document.getElementById('pinModalOverlay').addEventListener('click', function (e) {
+      if (e.target === this && _pinResolve) _pinResolve(null);
     });
   }
 
@@ -155,113 +131,72 @@
 
   async function _loadSecurityState() {
     var data = await ILUApi.security();
-
     if (data.error) return;
-
     ILUUI.updateModeBadge(data.autonomy || 'manual');
-
-    // Si hay emergencia activa, mostrar estado
-    if (data.emergency_active && data.emergency_active.length > 0) {
-      ILUCore.set(ILUCore.STATES.EMERGENCY);
-    }
-
-    // Si hay solicitudes abiertas, entrar en estado de espera
-    if (data.authorization_requests_open && data.authorization_requests_open > 0) {
-      ILUCore.set(ILUCore.STATES.AUTHORIZATION);
-    }
+    if (data.emergency_active && data.emergency_active.length > 0) ILUCore.set(ILUCore.STATES.EMERGENCY);
+    if (data.authorization_requests_open && data.authorization_requests_open > 0) ILUCore.set(ILUCore.STATES.AUTHORIZATION);
   }
 
-  /**
-   * Poll periódico para solicitudes de autorización abiertas.
-   * Si hay alguna, el Corazón entra en estado de espera.
-   */
   function _pollAuthorizationRequests() {
     setInterval(async function () {
       var data = await ILUApi.authorizationRequests();
-
       if (data.error) return;
-
-      var openRequests = (data.requests || []).filter(function (r) {
-        return r.status === 'open' || r.status === 'pending';
-      });
-
-      if (openRequests.length > 0 && ILUCore.isIdle()) {
-        ILUCore.set(ILUCore.STATES.AUTHORIZATION);
-      }
+      var open = (data.requests || []).filter(function (r) { return r.status === 'open' || r.status === 'pending'; });
+      if (open.length > 0 && ILUCore.isIdle()) ILUCore.set(ILUCore.STATES.AUTHORIZATION);
     }, 15000);
   }
 
-  /**
-   * Presencia unificada: I.L.U. se siente como una sola inteligencia.
-   *
-   * Consulta periódicamente /state (conciencia) y /notifications
-   * (avisos + proactividad en vivo). Con /state actualiza la etiqueta de
-   * presencia bajo el plasma (objetivos, pendientes, percepción). Con
-   * /notifications muestra los avisos nuevos como mensajes del asistente,
-   * para que la proactividad de I.L.U. aparezca en la conversación.
-   */
   var _lastNotifTs = '';
-  var _presenceRendered = false;
-
-  function _renderPresenceDetails(awareness) {
-    var el = document.getElementById('presenceDetails');
-    if (!el) return;
-
-    var parts = [];
-
-    if (awareness.goals && awareness.goals.length > 0) {
-      parts.push(
-        awareness.goals.length + ' objetivo' +
-        (awareness.goals.length > 1 ? 's' : '')
-      );
-    }
-
-    if (awareness.proactive && awareness.proactive.length > 0) {
-      parts.push(
-        awareness.proactive.length + ' pendiente' +
-        (awareness.proactive.length > 1 ? 's' : '')
-      );
-    }
-
-    if (awareness.preferences && awareness.preferences.length > 0) {
-      parts.push('te conozco');
-    }
-
-    if (awareness.perception && awareness.perception.length > 0) {
-      var sensed = awareness.perception
-        .map(function (p) { return p.summary; })
-        .filter(Boolean);
-      if (sensed.length) parts.push(sensed.join(' · '));
-    }
-
-    el.textContent = parts.length ? parts.join(' · ') : '';
-  }
 
   function _pollPresence() {
     setInterval(async function () {
-      // 1) Conciencia unificada → etiqueta de presencia.
       try {
         var state = await ILUApi.state();
         if (state && !state.error) _renderPresenceDetails(state);
       } catch (_) { /* best-effort */ }
-
-      // 2) Notificaciones / proactividad → mensajes del asistente.
       try {
         var data = await ILUApi.notifications();
         var notifs = (data && data.notifications) || [];
-
         for (var i = notifs.length - 1; i >= 0; i--) {
           var n = notifs[i];
           if (!n.ts || !n.message) continue;
           if (_lastNotifTs && n.ts <= _lastNotifTs) continue;
           ILUUI.appendMessage('assistant', n.message, 'I.L.U. · aviso');
         }
-
-        if (notifs.length > 0) {
-          _lastNotifTs = notifs[0].ts || _lastNotifTs;
-        }
+        if (notifs.length > 0) _lastNotifTs = notifs[0].ts || _lastNotifTs;
       } catch (_) { /* best-effort */ }
     }, 12000);
+  }
+
+  function _renderPresenceDetails(awareness) {
+    var parts = [];
+    if (awareness.goals && awareness.goals.length) parts.push(awareness.goals.length + ' objetivo' + (awareness.goals.length > 1 ? 's' : ''));
+    if (awareness.proactive && awareness.proactive.length) parts.push(awareness.proactive.length + ' pendiente' + (awareness.proactive.length > 1 ? 's' : ''));
+    if (awareness.preferences && awareness.preferences.length) parts.push('te conozco');
+    if (awareness.perception && awareness.perception.length) {
+      var sensed = awareness.perception.map(function (p) { return p.summary; }).filter(Boolean);
+      if (sensed.length) parts.push(sensed.join(' · '));
+    }
+    var el = document.getElementById('stateHint');
+    if (el) el.textContent = parts.join(' · ');
+  }
+
+  // --- Restauración de historial ------------------------------------
+
+  async function _restoreHistory() {
+    try {
+      var data = await ILUApi.conversations(_sessionId, 50);
+      var turns = data.turns || data.messages || null;
+      if (data.error || !turns || !turns.length) return;
+      var container = document.getElementById('chatMessages');
+      if (!container) return;
+      container.innerHTML = '';
+      turns.forEach(function (t) {
+        if (t.role === 'user') ILUUI.appendMessage('user', t.content);
+        else if (t.role === 'assistant' || t.role === 'system') ILUUI.appendMessage('assistant', t.content, '');
+      });
+      container.scrollTop = container.scrollHeight;
+    } catch (_) { /* best-effort */ }
   }
 
   // --- Conversación (texto) ----------------------------------------
@@ -275,102 +210,125 @@
 
   // --- Conversación (voz) ------------------------------------------
 
-  /**
-   * La voz entrega texto y lo despacha por el MISMO camino que el
-   * texto escrito. No es un pipeline distinto.
-   */
   function _sendVoiceText(text) {
     if (!text) return;
-    // El mensaje "en vivo" se consolida en un mensaje real de usuario.
     ILUUI.clearLiveUserMessage();
     if (_sending) {
-      // Ya hay una petición en curso: no encolar por voz.
       if (_voiceEngine === 'legacy' && window.ILUVoice) window.ILUVoice.cancelTurn();
       return;
     }
     _dispatchMessage(text);
   }
 
-  /**
-   * Flujo de conversación compartido (texto y voz): construye el
-   * mensaje de usuario, consulta /ask, aplica el estado visual y, si
-   * la voz está activa, habla la respuesta. El texto pasa por el mismo
-   * /ask → ILUCore → memoria → proveedor → SecurityGate/Tools/Tasks.
-   */
   async function _dispatchMessage(message) {
     if (!message || _sending) return;
-
     var isVoice = _voiceActive();
-
     _sending = true;
 
     var sendBtn = document.getElementById('chatSend');
     if (sendBtn) sendBtn.disabled = true;
-
     var input = document.getElementById('chatInput');
     if (input) { input.value = ''; input.style.height = 'auto'; }
 
-    // Mostrar el mensaje del usuario
     ILUUI.appendMessage('user', message);
 
-    // Estado: escuchando → pensando
     if (!isVoice) {
       ILUCore.showListening();
-      setTimeout(function () {
-        ILUCore.showThinking();
-      }, 400);
-    } else {
-      ILUCore.showThinking();
-    }
+      setTimeout(function () { ILUCore.showThinking(); }, 400);
+    } else { ILUCore.showThinking(); }
 
     ILUUI.showTypingIndicator();
 
-    // Enviar al backend (el MISMO /ask)
-    var result = await ILUApi.ask(message, _sessionId);
+    var assistantMsgId = null;
+    var accumulatedText = '';
+    var finalResult = null;
+    var streamFailed = false;
 
-    ILUUI.removeTypingIndicator();
+    var handlers = {
+      onStatus: function (state) {
+        var map = {
+          listening: ILUCore.STATES.LISTENING,
+          thinking: ILUCore.STATES.THINKING,
+          working: ILUCore.STATES.WORKING,
+          responding: ILUCore.STATES.RESPONDING,
+          learning: ILUCore.STATES.LEARNING,
+          streaming: ILUCore.STATES.STREAMING,
+          researching: ILUCore.STATES.RESEARCHING,
+          scheduled: ILUCore.STATES.SCHEDULED,
+          consolidating: ILUCore.STATES.CONSOLIDATING
+        };
+        if (map[state]) ILUCore.set(map[state]);
+      },
+      onToken: function (text) {
+        accumulatedText += text;
+        if (assistantMsgId) {
+          ILUUI.updateMessage(assistantMsgId, accumulatedText);
+        } else {
+          assistantMsgId = ILUUI.appendMessage('assistant', accumulatedText, '');
+        }
+        ILUUI.removeTypingIndicator();
+        ILUCore.setIntensity(0.6); // pulso mientras llega texto
+      },
+      onAction: function (event) {
+        var kind = event.kind || 'tool';
+        var tool = event.tool;
+        var args = event.arguments;
+        var reason = event.reason;
+        var summary = 'Ejecutando ' + tool;
+        if (reason) summary += ': ' + reason;
+        if (assistantMsgId) ILUUI.updateMessage(assistantMsgId, accumulatedText + '\n\n— ' + summary);
+        ILUCore.set(ILUCore.STATES.WORKING);
+      },
+      onActionResult: function (event) {
+        if (assistantMsgId && event.response) {
+          ILUUI.updateMessage(assistantMsgId, accumulatedText + '\n\n— ' + event.response);
+        }
+      },
+      onFinal: function (result) {
+        finalResult = result;
+        ILUUI.removeTypingIndicator();
+      },
+      onError: function (event) {
+        if (event && event.fallback) streamFailed = true;
+        else { finalResult = event; ILUUI.removeTypingIndicator(); }
+      },
+      onDone: function () {}
+    };
 
-    var responseText = result.response || 'Sin respuesta.';
+    await ILUApi.askStream(message, _sessionId, handlers);
 
-    // Aplicar estado visual y hablar la respuesta (si voz activa)
-    _applyVisualAndSpeak(result, responseText, isVoice);
-
-    if (result.error && !result.response) {
-      // Error de red o del servidor
-      ILUUI.appendMessage(
-        'assistant',
-        'Error: ' + (result.error === 'network_error'
-          ? 'No se pudo conectar con I.L.U.'
-          : result.error),
-        'ERROR'
-      );
-    } else {
-      // Respuesta de I.L.U.
-      var meta = (result.intent || '').toUpperCase();
-      if (result.tool) meta += (meta ? ' · ' : '') + result.tool;
-      if (result.provider) {
-        meta += (meta ? ' · ' : '') + result.provider.name;
-        if (result.provider.fallback) meta += ' (fallback)';
-      }
-
-      ILUUI.appendMessage('assistant', responseText, meta);
+    if (streamFailed && !finalResult) {
+      await new Promise(function (r) { setTimeout(r, 50); });
     }
 
-    // Actualizar sidebar
-    ILUUI.updateSidebarContext(result.context);
-    ILUUI.updateSidebarTool(result.tool, result.tool_result);
-    ILUUI.updateSidebarSubagent(result.subagent);
-    ILUUI.updateSidebarProvider(result.provider);
+    if (!finalResult) {
+      finalResult = { error: 'stream_failed', response: 'No se recibió respuesta del stream.' };
+    }
 
-    // Si la respuesta indica que falta autorización, mostrarla
-    if (result.authorization === 'ask' || result.authorization_request_id) {
-      var reqId = result.authorization_request_id || '';
-      ILUUI.appendMessage(
-        'assistant',
-        'Solicitud de autorización abierta. Ve a la pestaña Permisos para concederla o denegarla.'
-          + (reqId ? ' ID: ' + reqId.substring(0, 8) : ''),
-        'AUTHORIZATION'
-      );
+    var responseText = finalResult.response || accumulatedText || 'Sin respuesta.';
+    _applyVisualAndSpeak(finalResult, responseText, isVoice);
+
+    if (finalResult.error && !finalResult.response && !accumulatedText) {
+      ILUUI.appendMessage('assistant', 'Error: ' + (finalResult.error === 'network_error' ? 'No se pudo conectar con I.L.U.' : finalResult.error), 'ERROR');
+    } else {
+      var meta = (finalResult.intent || '').toUpperCase();
+      if (finalResult.tool) meta += (meta ? ' · ' : '') + finalResult.tool;
+      if (finalResult.provider) {
+        meta += (meta ? ' · ' : '') + finalResult.provider.name;
+        if (finalResult.provider.fallback) meta += ' (fallback)';
+      }
+      if (assistantMsgId) ILUUI.setMessageMeta(assistantMsgId, meta);
+      else ILUUI.appendMessage('assistant', responseText, meta);
+    }
+
+    ILUUI.updateSidebarContext(finalResult.context);
+    ILUUI.updateSidebarTool(finalResult.tool, finalResult.tool_result);
+    ILUUI.updateSidebarSubagent(finalResult.subagent);
+    ILUUI.updateSidebarProvider(finalResult.provider);
+
+    if (finalResult.authorization === 'ask' || finalResult.authorization_request_id) {
+      var reqId = finalResult.authorization_request_id || '';
+      ILUUI.appendMessage('assistant', 'Solicitud de autorización abierta. Abre Permisos en el dock para concederla o denegarla.' + (reqId ? ' ID: ' + reqId.substring(0, 8) : ''), 'AUTHORIZATION');
     }
 
     _sending = false;
@@ -378,20 +336,11 @@
     if (input) input.focus();
   }
 
-  /**
-   * Aplica el estado visual según la respuesta. Si la voz está activa,
-   * habla la respuesta (la voz gestiona responding → idle); si no, usa
-   * el mapeo estándar de ILUCore.applyFromResponse.
-   *
-   * La seguridad NO cambia: la voz solo reproduce el texto de la misma
-   * respuesta; nunca concede permisos ni altera el flujo.
-   */
   function _applyVisualAndSpeak(result, responseText, isVoice) {
     if (!isVoice || !_voiceEngine) {
       ILUCore.applyFromResponse(result);
       return;
     }
-
     if (result.error && !result.response) {
       ILUCore.set(ILUCore.STATES.ERROR);
       setTimeout(function () { ILUCore.showIdle(); }, 4000);
@@ -403,10 +352,7 @@
       else if (window.ILURealtime) window.ILURealtime.finishTurn();
     } else if (result.tool) {
       ILUCore.set(ILUCore.STATES.WORKING);
-      setTimeout(function () {
-        ILUCore.set(ILUCore.STATES.RESPONDING);
-        _engineSpeak(responseText);
-      }, 250);
+      setTimeout(function () { ILUCore.set(ILUCore.STATES.RESPONDING); _engineSpeak(responseText); }, 250);
     } else {
       ILUCore.set(ILUCore.STATES.RESPONDING);
       _engineSpeak(responseText);
@@ -415,77 +361,22 @@
 
   // --- UI de voz ----------------------------------------------------
 
-  /** Lo que I.L.U. escucha mientras hablas → mensaje vivo en el chat. */
-  function _onLiveTranscript(text) {
-    if (!text) return;
-    ILUUI.liveUserMessage(text);
-  }
-
-  function _onVoiceListening(on) {
-    _setMicUI(on ? 'listening' : 'idle');
-  }
-
-  function _onVoiceModeChange(on) {
-    _setMicUI(on ? 'listening' : 'idle');
-    // Modo voz: I.L.U. presente como centro; la interfaz se repliega.
-    document.body.classList.toggle('voice-mode', on);
-    if (on) ILUCore.showListening();
-    else ILUCore.showIdle();
-  }
-
-  function _onVoiceError(err) {
-    ILUUI.appendMessage('assistant', 'Error de voz: ' + err, 'VOZ');
-    ILUCore.set(ILUCore.STATES.ERROR);
-    setTimeout(function () { ILUCore.showIdle(); }, 2500);
-  }
-
+  function _onLiveTranscript(text) { if (text) ILUUI.liveUserMessage(text); }
+  function _onVoiceListening(on) { _setMicUI(on ? 'listening' : 'idle'); }
+  function _onVoiceModeChange(on) { _setMicUI(on ? 'listening' : 'idle'); document.body.classList.toggle('voice-mode', on); if (on) ILUCore.showListening(); else ILUCore.showIdle(); }
+  function _onVoiceError(err) { ILUUI.appendMessage('assistant', 'Error de voz: ' + err, 'VOZ'); ILUCore.set(ILUCore.STATES.ERROR); setTimeout(function () { ILUCore.showIdle(); }, 2500); }
   function _onVoiceUnavailable(reason) {
     if (reason === 'mic_permission') {
-      ILUUI.appendMessage(
-        'assistant',
-        'Concede acceso al micrófono para poder conversar conmigo.',
-        'VOZ'
-      );
-      _setMicUI('idle');
+      ILUUI.appendMessage('assistant', 'Concede acceso al micrófono para poder conversar conmigo.', 'VOZ'); _setMicUI('idle');
     } else {
-      ILUUI.appendMessage(
-        'assistant',
-        'La voz no está disponible en este navegador.',
-        'VOZ'
-      );
-      // Solo se desactiva el botón cuando la voz es genuinamente
-      // insoportada (motor legado); un permiso denegado es reversible.
-      if (_voiceEngine !== 'realtime') {
-        var micBtn = document.getElementById('micButton');
-        if (micBtn) micBtn.disabled = true;
-      }
+      ILUUI.appendMessage('assistant', 'La voz no está disponible en este navegador.', 'VOZ');
+      if (_voiceEngine !== 'realtime') { var micBtn = document.getElementById('micButton'); if (micBtn) micBtn.disabled = true; }
     }
   }
-
-  // --- Callbacks del motor REAL-TIME (realtime.js) ------------------
-
-  function _onRealtimeListening(on) {
-    _setMicUI(on ? 'listening' : 'idle');
-  }
-
-  /** El usuario está hablando (VAD): resalta el micrófono y el plasma. */
-  function _onCapturing(on) {
-    _setMicUI(on ? 'live' : 'listening');
-    if (on) ILUCore.showListening();
-  }
-
-  /** I.L.U. está reproduciendo su respuesta: la presencia "cobra voz". */
-  function _onSpeaking(on) {
-    _setMicUI(on ? 'speaking' : 'listening');
-    if (on) ILUCore.set(ILUCore.STATES.RESPONDING);
-    else ILUCore.showListening();
-  }
-
-  /** Barge-in: el usuario interrumpió a I.L.U.; vuelve a escucharla. */
-  function _onBargeIn() {
-    ILUCore.showListening();
-  }
-
+  function _onRealtimeListening(on) { _setMicUI(on ? 'listening' : 'idle'); }
+  function _onCapturing(on) { _setMicUI(on ? 'live' : 'listening'); if (on) ILUCore.showListening(); }
+  function _onSpeaking(on) { _setMicUI(on ? 'speaking' : 'listening'); if (on) ILUCore.set(ILUCore.STATES.RESPONDING); else ILUCore.showListening(); }
+  function _onBargeIn() { ILUCore.showListening(); }
   function _setMicUI(state) {
     var micBtn = document.getElementById('micButton');
     if (!micBtn) return;
@@ -495,11 +386,35 @@
     else if (state === 'speaking') micBtn.classList.add('speaking');
   }
 
+  // --- PIN modal promise helper ------------------------------------
+
+  function _requestPin(message) {
+    return new Promise(function (resolve) {
+      _pinResolve = resolve;
+      document.getElementById('pinInput').value = '';
+      document.getElementById('pinModalMessage').textContent = message || 'Ingresa tu PIN para confirmar la acción.';
+      document.getElementById('pinModalOverlay').classList.add('visible');
+      document.getElementById('pinModal').classList.add('visible');
+      document.getElementById('pinInput').focus();
+    }).then(function (pin) {
+      document.getElementById('pinModalOverlay').classList.remove('visible');
+      document.getElementById('pinModal').classList.remove('visible');
+      _pinResolve = null;
+      return pin;
+    });
+  }
+
+  // Exponer para ILUUI
+  window.ILUApp = {
+    _requestPin: _requestPin,
+    _ownerActor: async function () {
+      var sec = await ILUApi.security();
+      return (sec && !sec.error && sec.owner) ? sec.owner : 'owner';
+    }
+  };
+
   // --- Arranque -----------------------------------------------------
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+  else init();
 })();

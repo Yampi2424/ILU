@@ -106,6 +106,31 @@ def test_name_and_version_reflect_primary():
     assert provider.version == "0.8.0"
 
 
+def test_fallback_timeout_se_limita_al_tope_configurado(monkeypatch):
+    """Un backend de respaldo Acepta la conexión pero nunca responde no
+    debe congelar I.L.U. Si el timeout por defecto del proveedor local es
+    enorme (600s), el fallback lo acota a ILU_FALLBACK_TIMEOUT_CAP."""
+    fallback = LocalProvider()
+    assert fallback.timeout == 600  # por defecto, gigante
+
+    # Sin tope propio: se aplica el cap por defecto (120).
+    FallbackProvider(primary=StubProvider({}, name="cloud"),
+                     fallback=fallback)
+    assert fallback.timeout == 120
+
+    # Un timeout ya corto (configurado por el usuario) se respeta.
+    short = LocalProvider()
+    short.timeout = 30
+    FallbackProvider(primary=StubProvider({}, name="cloud"), fallback=short)
+    assert short.timeout == 30
+
+    # El tope es configurable (p. ej. modelos lentos).
+    monkeypatch.setenv("ILU_FALLBACK_TIMEOUT_CAP", "300")
+    local = LocalProvider()
+    FallbackProvider(primary=StubProvider({}, name="cloud"), fallback=local)
+    assert local.timeout == 300
+
+
 def test_real_omniroute_error_falls_back_to_local(monkeypatch):
     """Integración: OmniRoute cae (HTTP 500) -> responde Ollama local."""
     monkeypatch.setenv("ILU_OMNIROUTE_API_KEY", "clave")

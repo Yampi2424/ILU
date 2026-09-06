@@ -6,6 +6,12 @@
  * NUNCA toma decisiones de permisos ni ejecuta autoridad.
  *
  * Cada función devuelve una promesa con la respuesta JSON.
+ *
+ * Cabeceras:
+ *  - X-ILU-Token: token de dispositivo (localStorage, protege la máquina).
+ *  - X-ILU-Pin:   secreto del owner (sessionStorage, MISMO PIN de la
+ *                 concesión por voz/texto). Solo se envía en rutas
+ *                 administrativas; jamás viaja en logs/audit/commits.
  */
 
 window.ILUApi = (function () {
@@ -18,24 +24,18 @@ window.ILUApi = (function () {
   /**
    * Cabeceras de autorización.
    *
-   * - El token de dispositivo (X-ILU-Token) protege la MÁQUINA: el owner
-   *   lo configura con ILUApi.setToken(); se guarda en localStorage.
-   * - El secreto del owner (X-ILU-Pin) es el MISMO PIN de la concesión
-   *   por voz/texto: se guarda en sessionStorage (NO persiste entre
-   *   sesiones del navegador) y solo se envía en las rutas
-   *   administrativas.
-   *
    * Las rutas administrativas (grants, autonomía, resolución de
-   * solicitudes, borrado de conversaciones) aceptan cualquiera de las
-   * dos credenciales.
+   * solicitudes, skills, scheduler, agentes, research, memoria,
+   * borrado de conversaciones) aceptan cualquiera de las dos
+   * credenciales (token de dispositivo o PIN del owner).
    */
   function _authHeaders(extra, includePin) {
-    let headers = extra ? Object.assign({}, extra) : {};
-    let token = null;
+    var headers = extra ? Object.assign({}, extra) : {};
+    var token = null;
     try { token = window.localStorage.getItem(TOKEN_KEY); } catch (_) {}
     if (token) headers['X-ILU-Token'] = token;
     if (includePin) {
-      let pin = null;
+      var pin = null;
       try { pin = window.sessionStorage.getItem(PIN_KEY); } catch (_) {}
       if (pin) headers['X-ILU-Pin'] = pin;
     }
@@ -50,7 +50,7 @@ window.ILUApi = (function () {
       });
       return await response.json();
     } catch (error) {
-      console.error(`[I.L.U. API] GET ${path}:`, error);
+      console.error('[I.L.U. API] GET ' + path + ':', error);
       return { error: 'network_error', detail: String(error) };
     }
   }
@@ -67,7 +67,7 @@ window.ILUApi = (function () {
       });
       return await response.json();
     } catch (error) {
-      console.error(`[I.L.U. API] POST ${path}:`, error);
+      console.error('[I.L.U. API] POST ' + path + ':', error);
       return { error: 'network_error', detail: String(error) };
     }
   }
@@ -84,7 +84,7 @@ window.ILUApi = (function () {
       });
       return await response.json();
     } catch (error) {
-      console.error(`[I.L.U. API] PUT ${path}:`, error);
+      console.error('[I.L.U. API] PUT ' + path + ':', error);
       return { error: 'network_error', detail: String(error) };
     }
   }
@@ -97,7 +97,7 @@ window.ILUApi = (function () {
       });
       return await response.json();
     } catch (error) {
-      console.error(`[I.L.U. API] DELETE ${path}:`, error);
+      console.error('[I.L.U. API] DELETE ' + path + ':', error);
       return { error: 'network_error', detail: String(error) };
     }
   }
@@ -128,25 +128,110 @@ window.ILUApi = (function () {
     hasPin: function () {
       try { return !!window.sessionStorage.getItem(PIN_KEY); } catch (_) { return false; }
     },
+
     // --- Estado ---
     healthz: function () { return _get('/healthz'); },
     about: function () { return _get('/about'); },
     state: function () { return _get('/state'); },
     notifications: function (limit) {
-      let path = '/notifications';
+      var path = '/notifications';
       if (limit) path += '?limit=' + encodeURIComponent(String(limit));
       return _get(path);
     },
 
     // --- Conversación ---
     ask: function (message, sessionId) {
-      const body = { message: message };
+      var body = { message: message };
       if (sessionId) body.session_id = sessionId;
       return _post('/ask', body);
     },
 
+    askStream: function (message, sessionId, handlers) {
+      var body = { message: message };
+      if (sessionId) body.session_id = sessionId;
+
+      return fetch(BASE + '/ask/stream', {
+        method: 'POST',
+        headers: _authHeaders({
+          'Content-Type': 'application/json',
+          'Accept': 'text/event-stream'
+        }),
+        body: JSON.stringify(body)
+      }).then(function (response) {
+        if (!response.ok) {
+          return response.json().then(function (err) {
+            if (handlers && handlers.onError) handlers.onError(err);
+            throw new Error(err.error || 'stream_failed');
+          });
+        }
+
+        var reader = response.body.getReader();
+        var decoder = new TextDecoder();
+        var buffer = '';
+
+        function read() {
+          return reader.read().then(function (_ref) {
+            var done = _ref.done;
+            var value = _ref.value;
+
+            if (done) {
+              if (handlers && handlers.onDone) handlers.onDone();
+              return;
+            }
+
+            buffer += decoder.decode(value, { stream: true });
+            var lines = buffer.split('\n\n');
+            buffer = lines.pop() || '';
+
+            lines.forEach(function (line) {
+              if (line.indexOf('data: ') !== 0) return;
+              try {
+                var event = JSON.parse(line.slice(6));
+                if (handlers && handlers.onEvent) handlers.onEvent(event);
+                switch (event.event) {
+                  case 'status':
+                    if (handlers && handlers.onStatus) handlers.onStatus(event.state);
+                    break;
+                  case 'token':
+                    if (handlers && handlers.onToken) handlers.onToken(event.text);
+                    break;
+                  case 'action':
+                    if (handlers && handlers.onAction) handlers.onAction(event);
+                    break;
+                  case 'action_result':
+                    if (handlers && handlers.onActionResult) handlers.onActionResult(event);
+                    break;
+                  case 'final':
+                    if (handlers && handlers.onFinal) handlers.onFinal(event.result);
+                    break;
+                  case 'error':
+                    if (handlers && handlers.onError) handlers.onError(event);
+                    break;
+                }
+              } catch (e) {
+                // ignorar errores de parseo en chunks parciales
+              }
+            });
+
+            return read();
+          });
+        }
+
+        return read();
+      }).catch(function () {
+        // Fallback a ask() síncrono si el streaming no está disponible.
+        if (handlers && handlers.onError) {
+          handlers.onError({ error: 'stream_unavailable', fallback: true });
+        }
+        return _post('/ask', body).then(function (result) {
+          if (handlers && handlers.onFinal) handlers.onFinal(result);
+          return result;
+        });
+      });
+    },
+
     conversations: function (sessionId, limit) {
-      let path = '/conversations/' + encodeURIComponent(sessionId || 'default');
+      var path = '/conversations/' + encodeURIComponent(sessionId || 'default');
       if (limit) path += '?limit=' + encodeURIComponent(String(limit));
       return _get(path);
     },
@@ -160,7 +245,7 @@ window.ILUApi = (function () {
 
     // --- Tareas ---
     tasks: function (state) {
-      let path = '/tasks';
+      var path = '/tasks';
       if (state) path += '?state=' + encodeURIComponent(state);
       return _get(path);
     },
@@ -169,8 +254,10 @@ window.ILUApi = (function () {
       return _get('/tasks/' + encodeURIComponent(taskId));
     },
 
-    createTask: function (title, description) {
-      return _post('/tasks', { title: title, description: description || '' });
+    createTask: function (title, description, priority) {
+      var body = { title: title, description: description || '' };
+      if (priority) body.priority = priority;
+      return _post('/tasks', body);
     },
 
     updateTaskState: function (taskId, state) {
@@ -181,8 +268,7 @@ window.ILUApi = (function () {
       return _put('/tasks/' + encodeURIComponent(taskId) + '/progress', { progress: progress });
     },
 
-    // --- JARVIS Evolution: objetivos, aprendizaje, proactividad,
-    //     percepción e integración con dispositivos ---
+    // --- JARVIS Evolution ---
     goals: function () { return _get('/goals'); },
     goalDetail: function (goalId) {
       return _get('/goals/' + encodeURIComponent(goalId));
@@ -192,12 +278,116 @@ window.ILUApi = (function () {
     perception: function () { return _get('/perception'); },
     integrations: function () { return _get('/integrations'); },
 
+    // --- Skills (Fase B) ---
+    skills: function () { return _get('/skills'); },
+    skillDetail: function (name) {
+      return _get('/skills/' + encodeURIComponent(name));
+    },
+    runSkill: function (name, variables) {
+      return _post(
+        '/skills/' + encodeURIComponent(name) + '/run',
+        { variables: variables || {} },
+        true
+      );
+    },
+
+    // --- Scheduler / Jobs (Fase C) ---
+    scheduler: function () { return _get('/scheduler'); },
+    schedulerJob: function (jobId) {
+      return _get('/scheduler/' + encodeURIComponent(jobId));
+    },
+    createJob: function (name, kind, schedule, params, enabled) {
+      return _post('/scheduler', {
+        name: name,
+        kind: kind,
+        schedule: schedule,
+        params: params || {},
+        enabled: enabled !== false
+      }, true);
+    },
+    schedulerAction: function (jobId, action) {
+      // action: enable | disable | delete | run
+      return _post(
+        (action === 'run' ? '/scheduler/' + encodeURIComponent(jobId) + '/run'
+          : '/scheduler/' + encodeURIComponent(jobId)),
+        action === 'run' ? {} : { action: action },
+        true
+      );
+    },
+
+    // --- Agentes (Fase C) ---
+    agents: function () { return _get('/agents'); },
+    agentDetail: function (agentId) {
+      return _get('/agents/' + encodeURIComponent(agentId));
+    },
+    createAgent: function (name, role, objective, schedule, enabled) {
+      return _post('/agents', {
+        name: name,
+        role: role,
+        objective: objective,
+        schedule: schedule || '',
+        enabled: enabled !== false
+      }, true);
+    },
+    agentAction: function (agentId, action, fields) {
+      // action: enable | disable | delete | update | run
+      var body = {};
+      if (action === 'run') return _post('/agents/' + encodeURIComponent(agentId) + '/run', {}, true);
+      if (action === 'update') body = { action: 'update', name: fields.name, role: fields.role, objective: fields.objective, schedule: fields.schedule };
+      else body = { action: action };
+      return _post('/agents/' + encodeURIComponent(agentId), body, true);
+    },
+
+    // --- Deep Research (Fase D) ---
+    researchTasks: function () { return _get('/research'); },
+    researchTask: function (taskId) {
+      return _get('/research/' + encodeURIComponent(taskId));
+    },
+    runResearch: function (question) {
+      return _post('/research/run', { question: question }, true);
+    },
+
+    // --- Memoria (Fase E) ---
+    memorySearch: function (term, limit) {
+      var path = '/memory/search?q=' + encodeURIComponent(term || '');
+      if (limit) path += '&limit=' + encodeURIComponent(String(limit));
+      return _get(path);
+    },
+    memoryRecents: function (type, limit) {
+      var path = '/memory/recents';
+      var q = [];
+      if (type) q.push('type=' + encodeURIComponent(type));
+      if (limit) q.push('limit=' + encodeURIComponent(String(limit)));
+      if (q.length) path += '?' + q.join('&');
+      return _get(path);
+    },
+    memoryStats: function () { return _get('/memory'); },
+    memoryIngest: function (source, tag) {
+      return _post('/memory/ingest', { source: source, tag: tag || '' }, true);
+    },
+    memoryConsolidate: function () {
+      return _post('/memory/consolidate', {}, true);
+    },
+
+    // --- Diagnostics + Benchmark (Fase F) ---
+    diagnostics: function () { return _get('/diagnostics'); },
+    diagnosticsCheck: function () { return _get('/diagnostics/check'); },
+    benchmark: function () { return _get('/benchmark'); },
+    runBenchmark: function (mode, categories) {
+      return _post('/benchmark/run', {
+        mode: mode || 'offline',
+        categories: categories || undefined
+      }, true);
+    },
+
     // --- Seguridad / Permisos ---
     security: function () { return _get('/security'); },
     grants: function (params) {
-      let path = '/grants';
-      if (params && params.capability) path += '?capability=' + encodeURIComponent(params.capability);
-      if (params && params.status) path += (path.includes('?') ? '&' : '?') + 'status=' + encodeURIComponent(params.status);
+      var path = '/grants';
+      var q = [];
+      if (params && params.capability) q.push('capability=' + encodeURIComponent(params.capability));
+      if (params && params.status) q.push('status=' + encodeURIComponent(params.status));
+      if (q.length) path += '?' + q.join('&');
       return _get(path);
     },
     policy: function () { return _get('/policy'); },

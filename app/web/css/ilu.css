@@ -1,64 +1,85 @@
 /* ===================================================================
-   I.L.U. — Diseño visual de la presencia
+   I.L.U. — Shell inmersivo: la presencia ES la interfaz
 
-   "La Presencia de I.L.U."
+   "I.L.U. no es un chatbot. I.L.U. es una presencia viva."
 
-   Paleta: Índigo profundo (núcleo) + Violeta (presencia/energía) +
-   Ámbar cálido (servir a la familia) + Verde (éxito/aprendizaje) +
-   Rojo (error/emergencia).
-
-   Principio: I.L.U. es una presencia viva, luminosa, sobre fondo
-   oscuro. Nunca un chatbot genérico.
+   Diseño: oscuro, etéreo, plasma femenino.
+   Capas: fondo (nebula/gradients) → canvas plasma (central, stage)
+          → órbita de estado (etiqueta natural) → chat shell (vidrio)
+          → dock (mínimo) → mini-status → toasts.
+   Respeta prefers-reduced-motion.
    =================================================================== */
 
 /* Tokens de diseño — fuente única de verdad visual */
 :root {
-  /* Core palette */
-  --ilu-core: #4f46e5;
+  /* Core palette — feminine plasma */
+  --ilu-core: #4f46e5;          /* índigo profundo */
   --ilu-core-deep: #3730a3;
   --ilu-core-deepest: #1e1b4b;
-  --ilu-glow: #8b5cf6;
-  --ilu-glow-soft: rgba(139, 92, 246, 0.3);
-  --ilu-warm: #f59e0b;
-  --ilu-warm-soft: rgba(245, 158, 11, 0.3);
+  --ilu-plasma: #8b5cf6;        /* violeta — energía presente */
+  --ilu-plasma-soft: rgba(139, 92, 246, 0.15);
+  --ilu-plasma-glow: rgba(139, 92, 246, 0.4);
+  --ilu-fuchsia: #d946ef;       /* fucsia — calidez femenina */
+  --ilu-fuchsia-soft: rgba(217, 70, 239, 0.18);
+  --ilu-cyan: #22d3ee;          /* cian — acento lucidez */
+  --ilu-cyan-soft: rgba(34, 211, 238, 0.15);
+  --ilu-warm: #fbbf24;          /* ámbar — servir a la familia */
+  --ilu-warm-soft: rgba(251, 191, 36, 0.18);
   --ilu-ok: #22c55e;
-  --ilu-ok-soft: rgba(34, 197, 94, 0.3);
+  --ilu-ok-soft: rgba(34, 197, 94, 0.2);
   --ilu-error: #ef4444;
-  --ilu-error-soft: rgba(239, 68, 68, 0.3);
+  --ilu-error-soft: rgba(239, 68, 68, 0.2);
 
   /* Surface & text */
-  --ilu-bg: #0a0a1a;
-  --ilu-bg-elevated: #111128;
-  --ilu-bg-card: #16163a;
-  --ilu-bg-input: #1c1c44;
-  --ilu-border: rgba(139, 92, 246, 0.15);
-  --ilu-border-active: rgba(139, 92, 246, 0.4);
-  --ilu-text: #eef2ff;
-  --ilu-text-secondary: #94a3b8;
-  --ilu-text-dim: #475569;
+  --ilu-bg: #07060f;            /* negro profundo con toque índigo */
+  --ilu-bg-elevated: #0d0c1a;
+  --ilu-bg-card: #131224;
+  --ilu-bg-input: #1a1833;
+  --ilu-border: rgba(139, 92, 246, 0.12);
+  --ilu-border-strong: rgba(139, 92, 246, 0.28);
+  --ilu-border-glow: rgba(139, 92, 246, 0.5);
+  --ilu-text: #f0eeff;
+  --ilu-text-secondary: #a5a3c8;
+  --ilu-text-dim: #5e5c7d;
+
+  /* Glassmorphism */
+  --ilu-glass-bg: rgba(19, 18, 36, 0.65);
+  --ilu-glass-border: rgba(139, 92, 246, 0.18);
+  --ilu-glass-blur: blur(16px);
 
   /* Layout */
-  --ilu-topbar-h: 56px;
-  --ilu-sidebar-w: 300px;
-  --ilu-presence-w: 280px;
-  --ilu-radius: 12px;
-  --ilu-radius-sm: 8px;
-  --ilu-radius-lg: 20px;
+  --ilu-dock-size: 48px;
+  --ilu-dock-gap: 10px;
+  --ilu-chat-max-w: 720px;
+  --ilu-radius: 14px;
+  --ilu-radius-sm: 10px;
+  --ilu-radius-lg: 24px;
+  --ilu-radius-xl: 32px;
 
   /* Transitions */
-  --ilu-transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  --ilu-ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --ilu-transition: 0.35s var(--ilu-ease);
   --ilu-transition-fast: 0.15s ease;
 
   /* Spacing */
   --ilu-gap: 16px;
   --ilu-gap-sm: 8px;
   --ilu-gap-lg: 24px;
+  --ilu-gap-xl: 32px;
 
   /* Fonts */
   --ilu-font: -apple-system, BlinkMacSystemFont, 'Segoe UI',
-    'Inter', Roboto, sans-serif;
-  --ilu-font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code',
-    monospace;
+    'Inter', 'Noto Sans', Roboto, sans-serif;
+  --ilu-font-mono: 'SF Mono', 'Fira Code', 'Cascadia Code', monospace;
+}
+
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* Reset suave */
@@ -76,211 +97,245 @@ html, body {
   background: var(--ilu-bg);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* === BARRA SUPERIOR ================================================ */
+/* ===================================================================
+   STAGE — viewport completo
+   =================================================================== */
 
-.topbar {
+.stage {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: var(--ilu-topbar-h);
-  background: var(--ilu-bg-elevated);
-  border-bottom: 1px solid var(--ilu-border);
-  display: flex;
-  align-items: center;
-  padding: 0 var(--ilu-gap);
-  z-index: 100;
-  backdrop-filter: blur(12px);
-}
-
-.topbar-brand {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-weight: 700;
-  font-size: 16px;
-  letter-spacing: 0.02em;
-}
-
-.topbar-brand-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--ilu-glow);
-  box-shadow: 0 0 8px var(--ilu-glow);
-}
-
-.topbar-nav {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: auto;
-}
-
-.topbar-btn {
-  background: transparent;
-  border: 1px solid transparent;
-  color: var(--ilu-text-secondary);
-  padding: 6px 14px;
-  border-radius: var(--ilu-radius-sm);
-  cursor: pointer;
-  font-size: 13px;
-  font-family: var(--ilu-font);
-  transition: var(--ilu-transition-fast);
-}
-
-.topbar-btn:hover {
-  color: var(--ilu-text);
-  background: var(--ilu-bg-card);
-  border-color: var(--ilu-border);
-}
-
-.topbar-btn.active {
-  color: var(--ilu-glow);
-  background: rgba(139, 92, 246, 0.1);
-  border-color: var(--ilu-border-active);
-}
-
-/* Indicador de modo */
-.mode-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  margin-left: 12px;
-}
-
-.mode-badge[data-mode="manual"] {
-  background: var(--ilu-warm-soft);
-  color: var(--ilu-warm);
-  border: 1px solid rgba(245, 158, 11, 0.3);
-}
-
-.mode-badge[data-mode="assisted"] {
-  background: var(--ilu-glow-soft);
-  color: var(--ilu-glow);
-  border: 1px solid rgba(139, 92, 246, 0.3);
-}
-
-.mode-badge[data-mode="autonomous"] {
-  background: var(--ilu-ok-soft);
-  color: var(--ilu-ok);
-  border: 1px solid rgba(34, 197, 94, 0.3);
-}
-
-.mode-badge-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-/* === LAYOUT PRINCIPAL ============================================== */
-
-.app {
-  display: flex;
-  height: 100vh;
-  padding-top: var(--ilu-topbar-h);
-}
-
-/* === PANEL PRINCIPAL (centro) ====================================== */
-
-.main-panel {
-  flex: 1;
+  inset: 0;
   display: flex;
   flex-direction: column;
-  min-width: 0;
-  position: relative;
-}
-
-/* === VISTA DE CHAT (con presencia lateral) ========================= */
-
-.chat-view {
-  flex: 1;
-  display: flex;
-  min-height: 0;
   overflow: hidden;
 }
 
-/* === PRESENCIA DE I.L.U. (zona lateral con Canvas) ================ */
-
-.presence-zone {
-  width: var(--ilu-presence-w);
-  min-width: var(--ilu-presence-w);
-  flex-shrink: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  padding: 32px 8px 16px;
-  border-right: 1px solid var(--ilu-border);
-  background: linear-gradient(
-    180deg,
-    rgba(10, 10, 26, 0) 0%,
-    rgba(10, 10, 26, 0.3) 50%,
-    rgba(10, 10, 26, 0) 100%
-  );
-  position: relative;
-}
-
-.presence-canvas-wrap {
-  width: 100%;
-  flex: 1;
-  min-height: 200px;
-  position: relative;
-}
-
-.presence-canvas-wrap canvas {
+/* Fondo ambiental: capas de profundidad */
+.bg-ambient {
   position: absolute;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  z-index: 0;
+  overflow: hidden;
 }
 
-/* Label de estado */
-.ilu-state-label {
-  text-align: center;
-  font-size: 12px;
-  color: var(--ilu-text-secondary);
-  margin-top: var(--ilu-gap-sm);
-  min-height: 18px;
-  transition: color var(--ilu-transition);
-  flex-shrink: 0;
+.bg-gradient {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(
+      ellipse 80% 60% at 50% 30%,
+      rgba(139, 92, 246, 0.08) 0%,
+      transparent 60%
+    ),
+    radial-gradient(
+      ellipse 60% 40% at 80% 20%,
+      rgba(217, 70, 239, 0.06) 0%,
+      transparent 55%
+    ),
+    radial-gradient(
+      ellipse 50% 50% at 20% 80%,
+      rgba(34, 211, 238, 0.04) 0%,
+      transparent 50%
+    ),
+    linear-gradient(
+      180deg,
+      #07060f 0%,
+      #0a0818 50%,
+      #0c0a1c 100%
+    );
 }
 
-.ilu-state-label[data-state="authorization"] {
-  color: var(--ilu-warm);
+.bg-nebula {
+  position: absolute;
+  inset: 0;
+  opacity: 0.35;
+  background-image:
+    radial-gradient(ellipse at 30% 30%, rgba(139,92,246,0.25) 0%, transparent 70%),
+    radial-gradient(ellipse at 70% 70%, rgba(217,70,239,0.18) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 50%, rgba(34,211,238,0.12) 0%, transparent 80%);
+  animation: ilu-nebula-drift 40s var(--ilu-ease) infinite alternate;
 }
 
-.ilu-state-label[data-state="error"] {
-  color: var(--ilu-error);
+@keyframes ilu-nebula-drift {
+  0%   { transform: translate(0, 0) scale(1); }
+  25%  { transform: translate(-2%, 3%) scale(1.02); }
+  50%  { transform: translate(3%, -2%) scale(0.98); }
+  75%  { transform: translate(-1%, -3%) scale(1.01); }
+  100% { transform: translate(2%, 1%) scale(1); }
 }
 
-.ilu-presence-details {
-  text-align: center;
-  font-size: 11px;
-  color: var(--ilu-text-secondary);
-  opacity: 0.85;
-  margin-top: 2px;
-  min-height: 14px;
-  flex-shrink: 0;
-}
+/* ===================================================================
+   PRESENCE CORE — el corazón de I.L.U. (canvas plasma + aura)
+   =================================================================== */
 
-/* === COLUMNA DEL CHAT ============================================= */
-
-.chat-column {
+.presence-core {
+  position: relative;
+  z-index: 1;
   flex: 1;
   display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  /* El canvas plasma capta los eventos de puntero */
+}
+
+.presence-core canvas {
+  width: 100%;
+  height: 100%;
+  max-width: 600px;
+  max-height: 600px;
+  pointer-events: auto;
+  filter: drop-shadow(0 0 40px rgba(139, 92, 246, 0.35));
+}
+
+/* Aura reactiva al estado */
+.aura {
+  position: absolute;
+  inset: -40px;
+  border-radius: 50%;
+  background:
+    radial-gradient(
+      circle at 50% 50%,
+      var(--aura-color, rgba(139, 92, 246, 0)) 0%,
+      transparent 70%
+    );
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity var(--ilu-transition), background var(--ilu-transition);
+  z-index: -1;
+}
+
+.presence-core:hover .aura,
+.presence-core:focus-within .aura {
+  opacity: 1;
+}
+
+/* Colores de aura por estado (aplicados vía JS en .aura style) */
+.aura[data-state="listening"]    { --aura-color: rgba(139, 92, 246, 0.25); }
+.aura[data-state="thinking"]     { --aura-color: rgba(34, 211, 238, 0.22); }
+.aura[data-state="working"]      { --aura-color: rgba(217, 70, 239, 0.22); }
+.aura[data-state="responding"]   { --aura-color: rgba(34, 197, 94, 0.25); }
+.aura[data-state="learning"]     { --aura-color: rgba(251, 191, 36, 0.3); }
+.aura[data-state="streaming"]    { --aura-color: rgba(139, 92, 246, 0.3); }
+.aura[data-state="researching"]  { --aura-color: rgba(34, 211, 238, 0.3); }
+.aura[data-state="scheduled"]    { --aura-color: rgba(251, 191, 36, 0.25); }
+.aura[data-state="consolidating"]{ --aura-color: rgba(139, 92, 246, 0.3); }
+.aura[data-state="authorization"]{ --aura-color: rgba(251, 191, 36, 0.3); }
+.aura[data-state="error"]        { --aura-color: rgba(239, 68, 68, 0.25); }
+.aura[data-state="emergency"]    { --aura-color: rgba(239, 68, 68, 0.35); }
+
+/* ===================================================================
+   STATE ORBIT — etiqueta natural alrededor del núcleo
+   =================================================================== */
+
+.state-orbit {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
   flex-direction: column;
-  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.state-label {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--ilu-plasma);
+  text-shadow: 0 0 16px rgba(139, 92, 246, 0.5);
+  white-space: nowrap;
+  animation: ilu-label-breathe 4s var(--ilu-ease) infinite;
+}
+
+@keyframes ilu-label-breathe {
+  0%, 100% { opacity: 0.9; text-shadow: 0 0 16px rgba(139, 92, 246, 0.4); }
+  50%      { opacity: 1;   text-shadow: 0 0 28px rgba(139, 92, 246, 0.7); }
+}
+
+.state-label[data-state="listening"]    { color: var(--ilu-plasma); }
+.state-label[data-state="thinking"]     { color: var(--ilu-cyan);   text-shadow: 0 0 16px rgba(34, 211, 238, 0.5); }
+.state-label[data-state="working"]      { color: var(--ilu-fuchsia); text-shadow: 0 0 16px rgba(217, 70, 239, 0.5); }
+.state-label[data-state="responding"]   { color: var(--ilu-ok);     text-shadow: 0 0 16px rgba(34, 197, 94, 0.5); }
+.state-label[data-state="learning"]     { color: var(--ilu-warm);   text-shadow: 0 0 16px rgba(251, 191, 36, 0.5); }
+.state-label[data-state="streaming"]    { color: var(--ilu-plasma); text-shadow: 0 0 20px rgba(139, 92, 246, 0.6); }
+.state-label[data-state="researching"]  { color: var(--ilu-cyan);   text-shadow: 0 0 20px rgba(34, 211, 238, 0.6); }
+.state-label[data-state="scheduled"]    { color: var(--ilu-warm);   text-shadow: 0 0 20px rgba(251, 191, 36, 0.6); }
+.state-label[data-state="consolidating"]{ color: var(--ilu-plasma); text-shadow: 0 0 20px rgba(139, 92, 246, 0.6); }
+.state-label[data-state="authorization"]{ color: var(--ilu-warm);   text-shadow: 0 0 20px rgba(251, 191, 36, 0.6); }
+.state-label[data-state="error"]        { color: var(--ilu-error);  text-shadow: 0 0 20px rgba(239, 68, 68, 0.6); }
+.state-label[data-state="emergency"]    { color: var(--ilu-error);  text-shadow: 0 0 20px rgba(239, 68, 68, 0.7); }
+
+.state-hint {
+  font-size: 11px;
+  color: var(--ilu-text-dim);
+  white-space: nowrap;
+  max-width: 300px;
+  text-align: center;
+  opacity: 0.8;
+  transition: opacity var(--ilu-transition-fast);
+}
+
+/* ===================================================================
+   CHAT SHELL — panel de vidrio flotante sobre la presencia
+   =================================================================== */
+
+.chat-shell {
+  position: absolute;
+  bottom: 100px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 100%;
+  max-width: var(--ilu-chat-max-w);
+  max-height: 60vh;
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border: 1px solid var(--ilu-glass-border);
+  border-radius: var(--ilu-radius-xl);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  z-index: 10;
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset,
+    0 0 60px rgba(139, 92, 246, 0.08);
+  animation: ilu-shell-rise 0.5s var(--ilu-ease);
+}
+
+@keyframes ilu-shell-rise {
+  from { opacity: 0; transform: translateX(-50%) translateY(20px); }
+  to   { opacity: 1; transform: translateX(-50%) translateY(0); }
+}
+
+.chat-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ilu-gap-sm) var(--ilu-gap);
+  border-bottom: 1px solid var(--ilu-glass-border);
+  background: rgba(139, 92, 246, 0.04);
+}
+
+.chat-title {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--ilu-plasma);
+  text-transform: uppercase;
+}
+
+.chat-status {
+  font-size: 11px;
+  color: var(--ilu-text-dim);
+  text-transform: capitalize;
+  min-width: 80px;
+  text-align: right;
+  transition: color var(--ilu-transition-fast);
 }
 
 .chat-messages {
@@ -289,108 +344,153 @@ html, body {
   flex-direction: column;
   gap: var(--ilu-gap-sm);
   overflow-y: auto;
-  padding: var(--ilu-gap) var(--ilu-gap-lg);
+  padding: var(--ilu-gap);
+  max-height: 45vh;
+  min-height: 200px;
 }
 
+/* Mensajes */
 .chat-msg {
-  max-width: 75%;
-  padding: 10px 14px;
+  max-width: 85%;
+  padding: 12px 16px;
   border-radius: var(--ilu-radius);
-  line-height: 1.5;
+  line-height: 1.55;
   font-size: 14px;
-  animation: ilu-msg-in 0.3s ease-out;
+  animation: ilu-msg-in 0.35s var(--ilu-ease);
+  word-wrap: break-word;
+}
+
+@keyframes ilu-msg-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
 }
 
 .chat-msg.user {
   align-self: flex-end;
-  background: var(--ilu-core);
+  background: linear-gradient(135deg, var(--ilu-core), var(--ilu-plasma));
   color: white;
-  border-bottom-right-radius: 4px;
+  border-bottom-right-radius: 6px;
+  box-shadow: 0 4px 20px rgba(79, 70, 229, 0.3);
 }
 
 .chat-msg.assistant {
   align-self: flex-start;
   background: var(--ilu-bg-card);
   color: var(--ilu-text);
-  border: 1px solid var(--ilu-border);
-  border-bottom-left-radius: 4px;
+  border: 1px solid var(--ilu-glass-border);
+  border-bottom-left-radius: 6px;
 }
 
-.chat-msg .msg-meta {
-  font-size: 11px;
+.chat-msg.typing {
+  align-self: flex-start;
+  background: transparent;
+  border: none;
+  padding: 8px 12px;
+}
+
+.chat-msg.live {
+  align-self: flex-end;
+  background: rgba(79, 70, 229, 0.4);
+  color: #fff;
+  font-style: italic;
+  border: 1px dashed rgba(139, 92, 246, 0.5);
+  border-bottom-right-radius: 6px;
+  animation: none;
+}
+
+.chat-msg.live::after {
+  content: '▍';
+  margin-left: 2px;
+  color: var(--ilu-plasma);
+  animation: ilu-live-cursor 1s steps(2, end) infinite;
+}
+
+@keyframes ilu-live-cursor {
+  0%, 49% { opacity: 1; }
+  50%, 100% { opacity: 0; }
+}
+
+.chat-msg-content {
+  word-break: break-word;
+}
+
+.msg-meta {
+  font-size: 10px;
+  font-family: var(--ilu-font-mono);
   color: var(--ilu-text-dim);
   margin-top: 4px;
-  font-family: var(--ilu-font-mono);
+  opacity: 0.8;
 }
 
-/* Input del chat */
-.chat-input-row {
+.typing-text {
+  margin-left: 6px;
+  color: var(--ilu-text-dim);
+  font-size: 12px;
+}
+
+.loading-dots {
+  display: inline-block;
+  width: 1.2em;
+  color: var(--ilu-plasma);
+}
+
+.loading-dots::after {
+  content: '';
+  animation: ilu-dots 1.4s steps(4, end) infinite;
+}
+
+@keyframes ilu-dots {
+  0%   { content: ''; }
+  25%  { content: '·'; }
+  50%  { content: '··'; }
+  75%  { content: '···'; }
+  100% { content: ''; }
+}
+
+/* Composer */
+.chat-composer {
   display: flex;
+  align-items: flex-end;
   gap: var(--ilu-gap-sm);
-  padding: 0 var(--ilu-gap-lg) var(--ilu-gap);
-  flex-shrink: 0;
+  padding: var(--ilu-gap-sm) var(--ilu-gap);
+  border-top: 1px solid var(--ilu-glass-border);
+  background: rgba(7, 6, 15, 0.4);
 }
 
 .chat-input {
   flex: 1;
   background: var(--ilu-bg-input);
   border: 1px solid var(--ilu-border);
-  border-radius: var(--ilu-radius);
-  padding: 12px 16px;
+  border-radius: var(--ilu-radius-sm);
+  padding: 10px 14px;
   color: var(--ilu-text);
   font-size: 14px;
   font-family: var(--ilu-font);
   outline: none;
-  transition: border-color var(--ilu-transition-fast);
   resize: none;
   min-height: 44px;
   max-height: 120px;
+  line-height: 1.5;
+  transition: border-color var(--ilu-transition-fast), box-shadow var(--ilu-transition-fast);
 }
 
 .chat-input:focus {
-  border-color: var(--ilu-border-active);
+  border-color: var(--ilu-border-strong);
+  box-shadow: 0 0 0 3px var(--ilu-plasma-soft);
 }
 
 .chat-input::placeholder {
   color: var(--ilu-text-dim);
 }
 
-.chat-send {
-  background: var(--ilu-core);
-  color: white;
-  border: none;
-  border-radius: var(--ilu-radius);
-  padding: 12px 20px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 600;
-  font-family: var(--ilu-font);
-  transition: var(--ilu-transition-fast);
-  white-space: nowrap;
-}
-
-.chat-send:hover {
-  background: var(--ilu-glow);
-}
-
-.chat-send:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-/* === VOZ ========================================================= */
-/* La voz no es una "aplicación de grabación": el micrófono es un
-   interruptor de presencia discreto y elegante. El plasma, no unas
-   barras, es quien reacciona a la voz. */
-
 .chat-mic {
   background: var(--ilu-bg-card);
   color: var(--ilu-text-secondary);
   border: 1px solid var(--ilu-border);
-  border-radius: var(--ilu-radius);
-  width: 48px;
+  border-radius: var(--ilu-radius-sm);
+  width: 44px;
+  height: 44px;
   cursor: pointer;
-  font-size: 18px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -401,463 +501,283 @@ html, body {
 .chat-mic:hover {
   background: var(--ilu-bg-input);
   color: var(--ilu-text);
-  border-color: var(--ilu-border-active);
+  border-color: var(--ilu-border-strong);
 }
 
 .chat-mic:disabled {
-  opacity: 0.4;
+  opacity: 0.35;
   cursor: not-allowed;
 }
 
-/* Sesión de voz activa: I.L.U. presente, en tono violeta (nada de
-   rojo de "grabando"). */
 .chat-mic.active {
-  color: var(--ilu-glow);
-  border-color: var(--ilu-border-active);
-  background: var(--ilu-glow-soft);
-  box-shadow: 0 0 12px rgba(139, 92, 246, 0.25);
+  color: var(--ilu-plasma);
+  border-color: var(--ilu-border-strong);
+  background: var(--ilu-plasma-soft);
+  box-shadow: 0 0 16px rgba(139, 92, 246, 0.2);
 }
 
-/* El usuario está hablando: latido suave y continuo. */
 .chat-mic.live {
-  animation: ilu-mic-breathe 1.4s ease-in-out infinite;
-}
-
-/* I.L.U. está respondiendo: núcleo encendido. */
-.chat-mic.speaking {
-  color: #fff;
-  border-color: rgba(139, 92, 246, 0.6);
-  background: var(--ilu-glow);
+  animation: ilu-mic-breathe 1.4s var(--ilu-ease) infinite;
 }
 
 @keyframes ilu-mic-breathe {
-  0%, 100% { box-shadow: 0 0 6px rgba(139, 92, 246, 0.15); }
-  50% { box-shadow: 0 0 18px rgba(139, 92, 246, 0.5); }
+  0%, 100% { box-shadow: 0 0 8px rgba(139, 92, 246, 0.15); }
+  50%      { box-shadow: 0 0 24px rgba(139, 92, 246, 0.45); }
 }
 
-/* Mensaje de usuario "en vivo": lo que I.L.U. escucha mientras hablas,
-   aparece en el chat como una palabra real, no como un registro. */
-.chat-msg.live {
-  align-self: flex-end;
-  background: rgba(79, 70, 229, 0.55);
-  color: #fff;
-  font-style: italic;
-  border: 1px dashed rgba(139, 92, 246, 0.5);
-  border-bottom-right-radius: 4px;
+.chat-mic.speaking {
+  color: white;
+  border-color: rgba(139, 92, 246, 0.5);
+  background: var(--ilu-plasma);
 }
 
-.chat-msg.live::after {
-  content: '▍';
-  margin-left: 2px;
-  color: var(--ilu-glow);
-  animation: ilu-live-cursor 1s steps(2, end) infinite;
-}
-
-@keyframes ilu-live-cursor {
-  0%, 49% { opacity: 1; }
-  50%, 100% { opacity: 0; }
-}
-
-/* === MODO VOZ: I.L.U. presente como centro ======================== */
-
-/* Con la voz activa, la presencia se expande, la barra lateral se
-   atenúa y el foco queda en la entidad, no en la interfaz. */
-body.voice-mode .presence-zone {
-  width: 400px;
-  min-width: 400px;
-  background: radial-gradient(
-    circle at 50% 42%,
-    rgba(139, 92, 246, 0.10) 0%,
-    rgba(10, 10, 26, 0) 65%
-  );
-}
-
-body.voice-mode .sidebar {
-  opacity: 0.35;
-}
-
-body.voice-mode .chat-messages {
-  padding-top: var(--ilu-gap);
-}
-
-/* === ZONA GENÉRICA (Tasks/Permisos/About sin presencia) =========== */
-
-.core-zone {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: flex-start;
-  overflow-y: auto;
-  padding: var(--ilu-gap-lg) var(--ilu-gap);
-}
-
-.chat-area {
-  width: 100%;
-  max-width: 720px;
-  margin: 0 auto;
-  padding: 0 var(--ilu-gap) var(--ilu-gap);
-}
-
-/* === SIDEBAR (contexto) ============================================ */
-
-.sidebar {
-  width: var(--ilu-sidebar-w);
-  background: var(--ilu-bg-elevated);
-  border-left: 1px solid var(--ilu-border);
-  display: flex;
-  flex-direction: column;
-  overflow-y: auto;
-  transition: width var(--ilu-transition), opacity var(--ilu-transition);
-}
-
-.sidebar.collapsed {
-  width: 0;
-  opacity: 0;
-  overflow: hidden;
-  border: none;
-}
-
-.sidebar-section {
-  padding: var(--ilu-gap);
-  border-bottom: 1px solid var(--ilu-border);
-}
-
-.sidebar-section:last-child {
-  border-bottom: none;
-}
-
-.sidebar-title {
-  font-size: 11px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  color: var(--ilu-text-dim);
-  margin-bottom: var(--ilu-gap-sm);
-}
-
-.sidebar-item {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 8px;
-  border-radius: var(--ilu-radius-sm);
-  font-size: 13px;
-  color: var(--ilu-text-secondary);
-  transition: var(--ilu-transition-fast);
-}
-
-.sidebar-item:hover {
-  background: var(--ilu-bg-card);
-  color: var(--ilu-text);
-}
-
-.sidebar-item-icon {
-  font-size: 14px;
-  width: 20px;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-.sidebar-item-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.sidebar-item-badge {
-  font-size: 10px;
-  font-family: var(--ilu-font-mono);
-  color: var(--ilu-text-dim);
-  flex-shrink: 0;
-}
-
-.sidebar-empty {
-  font-size: 12px;
-  color: var(--ilu-text-dim);
-  font-style: italic;
-  padding: 8px;
-}
-
-/* === PANEL DE CONTENIDO (Tasks/Permisos/etc) ====================== */
-
-.panel-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(10, 10, 26, 0.8);
-  backdrop-filter: blur(4px);
-  z-index: 200;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  animation: ilu-fade-in 0.2s ease-out;
-}
-
-.panel-overlay.visible {
-  display: flex;
-}
-
-.panel {
-  background: var(--ilu-bg-elevated);
-  border: 1px solid var(--ilu-border);
-  border-radius: var(--ilu-radius-lg);
-  width: 90%;
-  max-width: 640px;
-  max-height: 80vh;
-  overflow-y: auto;
-  padding: var(--ilu-gap-lg);
-}
-
-.panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: var(--ilu-gap);
-}
-
-.panel-title {
-  font-size: 18px;
-  font-weight: 700;
-}
-
-.panel-close {
-  background: transparent;
-  border: 1px solid var(--ilu-border);
-  color: var(--ilu-text-secondary);
-  width: 32px;
-  height: 32px;
-  border-radius: 50%;
-  cursor: pointer;
-  font-size: 16px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: var(--ilu-transition-fast);
-}
-
-.panel-close:hover {
-  background: var(--ilu-bg-card);
-  color: var(--ilu-text);
-}
-
-/* Tablas de datos */
-.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-
-.data-table th {
-  text-align: left;
-  padding: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--ilu-text-dim);
-  border-bottom: 1px solid var(--ilu-border);
-}
-
-.data-table td {
-  padding: 8px;
-  border-bottom: 1px solid var(--ilu-border);
-  color: var(--ilu-text-secondary);
-}
-
-.data-table tr:last-child td {
-  border-bottom: none;
-}
-
-/* Badges de estado */
-.status-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 2px 8px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 600;
-}
-
-.status-badge.running {
-  background: var(--ilu-glow-soft);
-  color: var(--ilu-glow);
-}
-
-.status-badge.done,
-.status-badge.completed {
-  background: var(--ilu-ok-soft);
-  color: var(--ilu-ok);
-}
-
-.status-badge.failed,
-.status-badge.error {
-  background: var(--ilu-error-soft);
-  color: var(--ilu-error);
-}
-
-.status-badge.pending {
-  background: var(--ilu-warm-soft);
+/* Modo conversación por voz: la presencia escucha y el anillo se fija.
+   Se activa desde app.js (classList.toggle('voice-mode', on)). */
+body.voice-mode #stateLabel {
   color: var(--ilu-warm);
 }
 
-.status-badge.active {
-  background: var(--ilu-ok-soft);
-  color: var(--ilu-ok);
+body.voice-mode .chat-shell {
+  border-color: rgba(139, 92, 246, 0.35);
+  box-shadow: 0 0 60px rgba(139, 92, 246, 0.18);
 }
 
-/* Botones de acción */
-.action-btn {
-  background: var(--ilu-bg-card);
-  border: 1px solid var(--ilu-border);
-  color: var(--ilu-text-secondary);
-  padding: 6px 12px;
-  border-radius: var(--ilu-radius-sm);
-  cursor: pointer;
-  font-size: 12px;
-  font-family: var(--ilu-font);
-  transition: var(--ilu-transition-fast);
-}
-
-.action-btn:hover {
-  background: var(--ilu-bg-input);
-  color: var(--ilu-text);
-  border-color: var(--ilu-border-active);
-}
-
-.action-btn.primary {
-  background: var(--ilu-core);
+.chat-send {
+  background: linear-gradient(135deg, var(--ilu-core), var(--ilu-plasma));
   color: white;
-  border-color: var(--ilu-core);
+  border: none;
+  border-radius: var(--ilu-radius-sm);
+  width: 44px;
+  height: 44px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--ilu-transition-fast);
+  flex-shrink: 0;
 }
 
-.action-btn.primary:hover {
-  background: var(--ilu-glow);
-  border-color: var(--ilu-glow);
+.chat-send:hover {
+  transform: scale(1.04);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
 }
 
-.action-btn.danger {
-  color: var(--ilu-error);
-  border-color: rgba(239, 68, 68, 0.3);
+.chat-send:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
 }
 
-.action-btn.danger:hover {
-  background: var(--ilu-error-soft);
+/* ===================================================================
+   DOCK — navegación mínima en la esquina
+   =================================================================== */
+
+.dock {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--ilu-dock-gap);
+  z-index: 20;
+  pointer-events: auto;
 }
 
-/* === SCROLLBAR ==================================================== */
-
-::-webkit-scrollbar {
-  width: 6px;
+.dock-item {
+  position: relative;
+  width: var(--ilu-dock-size);
+  height: var(--ilu-dock-size);
+  border-radius: 50%;
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border: 1px solid var(--ilu-glass-border);
+  color: var(--ilu-text-secondary);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--ilu-transition);
+  pointer-events: auto;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
 }
 
-::-webkit-scrollbar-track {
-  background: transparent;
+.dock-item:hover {
+  transform: scale(1.08) translateX(-4px);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
 }
 
+.dock-item:focus-visible {
+  outline: 2px solid var(--ilu-plasma);
+  outline-offset: 3px;
+}
+
+.dock-item[aria-pressed="true"] {
+  color: var(--ilu-plasma);
+  border-color: var(--ilu-border-strong);
+  background: var(--ilu-plasma-soft);
+  box-shadow: 0 0 20px rgba(139, 92, 246, 0.25);
+}
+
+.dock-label {
+  position: absolute;
+  right: calc(var(--ilu-dock-size) + 10px);
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--ilu-text-secondary);
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border: 1px solid var(--ilu-glass-border);
+  padding: 4px 10px;
+  border-radius: var(--ilu-radius-sm);
+  opacity: 0;
+  transform: translateX(8px);
+  pointer-events: none;
+  transition: opacity var(--ilu-transition-fast), transform var(--ilu-transition-fast);
+}
+
+.dock-item:hover .dock-label {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+/* ===================================================================
+   MINI STATUS — línea de estado en lenguaje natural
+   =================================================================== */
+
+.mini-status {
+  position: fixed;
+  bottom: 24px;
+  left: 24px;
+  max-width: 400px;
+  font-size: 12px;
+  color: var(--ilu-text-dim);
+  padding: 6px 12px;
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border: 1px solid var(--ilu-glass-border);
+  border-radius: var(--ilu-radius-sm);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity var(--ilu-transition), transform var(--ilu-transition);
+  z-index: 15;
+  pointer-events: none;
+}
+
+.mini-status:not(:empty) {
+  opacity: 0.9;
+  transform: translateY(0);
+}
+
+/* ===================================================================
+   TOAST CONTAINER — notificaciones proactividad/agentes/consolidación
+   =================================================================== */
+
+.toast-container {
+  position: fixed;
+  top: 80px;
+  right: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 100;
+  pointer-events: none;
+}
+
+.toast {
+  pointer-events: auto;
+  padding: 10px 16px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 13px;
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border: 1px solid var(--ilu-glass-border);
+  color: var(--ilu-text);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  transform: translateX(100%);
+  opacity: 0;
+  transition: transform var(--ilu-transition), opacity var(--ilu-transition);
+}
+
+.toast.show {
+  transform: translateX(0);
+  opacity: 1;
+}
+
+.toast.info    { border-left: 3px solid var(--ilu-cyan); }
+.toast.ok      { border-left: 3px solid var(--ilu-ok); }
+.toast.warn    { border-left: 3px solid var(--ilu-warm); }
+.toast.error   { border-left: 3px solid var(--ilu-error); }
+
+/* ===================================================================
+   RESPONSIVE
+   =================================================================== */
+
+@media (max-width: 900px) {
+  .chat-shell {
+    max-height: 55vh;
+    bottom: 90px;
+  }
+  .chat-messages { max-height: 40vh; }
+}
+
+@media (max-width: 640px) {
+  .stage {
+    padding-bottom: calc(var(--ilu-dock-size) * 4 + var(--ilu-gap-lg));
+  }
+
+  .chat-shell {
+    left: 12px;
+    right: 12px;
+    max-width: none;
+    bottom: calc(var(--ilu-dock-size) + 20px);
+    transform: none;
+    border-radius: var(--ilu-radius-lg);
+    max-height: 50vh;
+  }
+
+  .chat-messages { max-height: 35vh; }
+
+  .state-orbit {
+    bottom: 100px;
+  }
+
+  .dock {
+    bottom: 12px;
+    right: 12px;
+    left: 12px;
+    flex-direction: row;
+    justify-content: center;
+    align-items: center;
+    padding: 0 8px;
+    background: var(--ilu-glass-bg);
+    backdrop-filter: var(--ilu-glass-blur);
+    border: 1px solid var(--ilu-glass-border);
+    border-radius: var(--ilu-radius-lg);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  }
+
+  .dock-label { display: none; }
+
+  .mini-status {
+    left: 12px;
+    right: 12px;
+    bottom: calc(var(--ilu-dock-size) + 80px);
+    max-width: none;
+    text-align: center;
+  }
+}
+
+/* ===================================================================
+   SCROLLBAR
+   =================================================================== */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
   background: var(--ilu-border);
   border-radius: 3px;
 }
-
-::-webkit-scrollbar-thumb:hover {
-  background: var(--ilu-border-active);
-}
-
-/* === EMPTY STATE =================================================== */
-
-.empty-state {
-  text-align: center;
-  padding: var(--ilu-gap-lg);
-  color: var(--ilu-text-dim);
-  font-size: 13px;
-}
-
-.empty-state-icon {
-  font-size: 32px;
-  margin-bottom: var(--ilu-gap-sm);
-  opacity: 0.5;
-}
-
-/* === LOADING ====================================================== */
-
-.loading-dots::after {
-  content: '';
-  animation: ilu-dots 1.4s steps(4, end) infinite;
-}
-
-@keyframes ilu-dots {
-  0% { content: ''; }
-  25% { content: '.'; }
-  50% { content: '..'; }
-  75% { content: '...'; }
-  100% { content: ''; }
-}
-
-/* === RESPONSIVE =================================================== */
-
-@media (max-width: 900px) {
-  .presence-zone {
-    width: 200px;
-    min-width: 200px;
-    padding: 16px 4px 12px;
-  }
-
-  .presence-canvas-wrap {
-    min-height: 160px;
-  }
-}
-
-@media (max-width: 768px) {
-  .sidebar {
-    position: fixed;
-    right: 0;
-    top: var(--ilu-topbar-h);
-    bottom: 0;
-    z-index: 50;
-    box-shadow: -8px 0 32px rgba(0, 0, 0, 0.5);
-  }
-
-  /* En móvil: presencia arriba, chat abajo */
-  .chat-view {
-    flex-direction: column;
-  }
-
-  .presence-zone {
-    width: 100%;
-    min-width: 100%;
-    height: 180px;
-    min-height: 180px;
-    flex-shrink: 0;
-    border-right: none;
-    border-bottom: 1px solid var(--ilu-border);
-    flex-direction: row;
-    padding: 8px 16px;
-    gap: 12px;
-  }
-
-  .presence-canvas-wrap {
-    width: 180px;
-    min-width: 180px;
-    min-height: unset;
-    height: 100%;
-    flex: none;
-  }
-
-  .ilu-state-label {
-    writing-mode: vertical-rl;
-    text-orientation: mixed;
-    margin-top: 0;
-    margin-left: 4px;
-  }
-
-  .chat-msg {
-    max-width: 92%;
-  }
-
-  .topbar-brand span {
-    display: none;
-  }
-}
+::-webkit-scrollbar-thumb:hover { background: var(--ilu-border-strong); }

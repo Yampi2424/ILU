@@ -826,3 +826,379 @@ credencial de persona, la interfaz acepta `owner` + clave.
   `device.key`: si la máquina se compromete, conviene rotar la clave.
 - El PIN es de 6 dígitos y cubre solo la concesión por voz/texto; no
   protege la UI (que usa el device token).
+
+---
+
+## Bloque 15 · Streaming SSE + Proveedores con fallback (Fase A)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+- **Streaming en `AIProvider`** — nueva interfaz `stream(message, context=None, tools=None)` que devuelve generador de eventos (`{"type":"text","content":tok}` + `{"type":"tool_call",...}` al cierre).
+- `LocalProvider.stream()`: `stream=True` en `/api/chat` (Ollama NDJSON); itera tokens y emite `tool_calls` nativo vía `toolshape.parse_tool_calls`.
+- `OmniRouteProvider.stream()`: SSE (`stream=True` en `/chat/completions`); parsea `choices[0].delta.content` y acumula `delta.tool_calls`.
+- `FallbackProvider.stream()`: streamea primario; si error **antes del primer token** → cambia a stream del fallback, etiquetando `provider_used`/`fallback:true` en el cierre. Nunca duplica tokens.
+- `CloudProvider`: compatibilidad (evento único texto fijo).
+
+- **`ILUCore.process_stream`** — generador que reproduce `process()` emitiendo eventos dict:
+  - Caminos deterministas → `{"event":"done","result":{...}}`
+  - Vía modelo → `status:thinking` → `token:...` → `action:tool,...` → `done:result`
+  - Mismas semánticas: `conversations.append`, guardado memoria, `awareness`.
+
+- **Endpoint SSE** — `POST /ask/stream` (`?stream=1` o `Accept: text/event-stream`):
+  - Headers `Content-Type: text/event-stream`, `Cache-Control: no-cache`, `Connection: keep-alive`, `X-Accel-Buffering: no`
+  - `ThreadingHTTPServer` = una conexión por hilo → SSE no bloquea
+  - Escribe `data: {json}\n\n` + `flush()` por evento; cierre con `event: final\n\n`
+  - `POST /ask` (JSON) intacto.
+
+### Archivos
+
+- **Modificados**: `app/providers.py` (stream + fallback timeout cap `ILU_FALLBACK_TIMEOUT_CAP`), `app/core.py` (`process_stream`), `app/__main__.py` (`_handle_ask_stream`), `tests/test_fallback.py`, `tests/test_javis_evolution.py`
+- **Nuevos**: tests de streaming implícitos en suite
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/` → **753 passed** (incluye tests de fallback con timeout cap real)
+- `ILU_FALLBACK_TIMEOUT_CAP` (default 120s) evita hang de 600s si fallback acepta pero nunca responde
+- Smoke HTTP: `/ask/stream` produce SSE válido con `data: {...}` + `event: final`
+
+---
+
+## Bloque 16 · Skills — Catálogo + Ejecución gateada (Fase B)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+**Formato `SKILL.md`** — frontmatter YAML-like con parser propio stdlib (sin dependencias):
+
+```markdown
+---
+name: investigacion
+description: Busca en la web y sintetiza un informe con fuentes
+steps:
+  - tool: web_search
+    args:
+      query: "{tema}"
+    note: "Busco información sobre {tema}"
+  - tool: web_fetch
+    args:
+      url: "{resultados[0].url}"
+    note: "Profundizo en la primera fuente"
+  - skill: resumen
+    note: "Sintetizo el informe final"
+---
+```
+
+- Plantillas `{var}` desde `variables` + outputs de pasos previos (claves punto: `resultados[0].url`).
+- Sub-skills con límite de profundidad y guard anti-ciclos (fail-closed).
+
+**`SkillManager`** (`app/skills.py`):
+- `discover()` recarga `app/skills_catalog/*.md`
+- `catalog()` / `get(name)`
+- `run(name, variables, actor="ilu")`: por paso
+  - `{tool, args}` → materializa plantillas, `ToolCall(tool, args)` → **`core._execute_tool_call(mode="skill")`** → MISMA compuerta SecurityGate + audit
+  - Herramienta no permitida → denegado en compuerta, se audita, **NO auto-concede**
+  - `{skill}` → sub-skill con guard de profundidad/ciclos
+  - `note` → resumen lenguaje natural para UI
+  - **Nunca toca `Authority` ni `GrantStore`** → skill run no crea grants
+
+**6 skills iniciales** (todas en español, pasan por tools existentes o `web_fetch`):
+1. `resumen` — `read_file`/`web_search` → síntesis (provider.generate)
+2. `investigacion` — `web_search` ×N → informe con fuentes
+3. `resumen-del-dia` — contexto/proactividad → digest
+4. `organizar-archivos` — explode workspace + `write_file` (ask gate)
+5. `aprende-sobre` — `read_file`/`ingest` → memorizaje
+6. `resumen-de-tareas` — register tasks → resumen
+
+**Tool `web_fetch`** (`tools/search.py`): HTTP(s), texto/HTML (`html.parser` stdlib), **guard SSRF** (bloquea localhost/privado/loopback/link-local, IPv4/IPv6), límite de bytes. Permission `safe`.
+
+**Endpoints** (admin auth):
+- `GET /skills` (catálogo), `GET /skills/<name>`, `POST /skills/<name>/run` ({variables})
+- Core: `_skill_command()` NL ("ejecutá la skill X", "qué skills tenés")
+
+### Archivos
+
+- **Nuevos**: `app/skills.py`, `app/skills_catalog/` (6 archivos), `tools/search.py` (web_fetch), `tests/test_skills.py`
+- **Modificados**: `tools/__init__.py` (registra `web_fetch`), `app/core.py` (`_skill_command`), `app/__main__.py` (endpoints skills)
+- **Tests**: parser, discover, run gated (tool permitida corre; no permitida deniega + audita), ciclo sub-skill, límite profundidad, **assert: tras run NO existe grant nuevo**, `web_fetch` SSRF
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/test_skills.py -v` → todos pasan
+- Suite completa 753 tests verde
+- Skill run sin grant = denegado + auditado; con grant = corre + auditado; NUNCA auto-grantee
+
+---
+
+## Bloque 17 · Scheduler + Agentes programados persistentes (Fase C)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+**`app/scheduler.py`** — `JobStore` JSONL (`memory/scheduler.jsonl`, gitignored):
+- `Job`: {id, name, kind, schedule, enabled, last_run, next_due, params}
+- Schedule: `interval` (segundos) o `cron`-lite (`"*/5 * * * *"`, `"HH:MM"` diaria)
+- `Scheduler` daemon thread (arranca en `__main__`), tick ~15s → `core.on_tick()`:
+  - Dispara `core.proactivity.fire()` (reglas vencidas, grant-aware)
+  - Dispara jobs vencidos por `kind`:
+    - `agent` → `AgentManager.run()` (gate con grants owner)
+    - `reminder` → notify
+    - `monitor` → ejecuta check gateado, compara con última, notifica en cambio
+    - `digest` → skill `resumen-del-día`
+    - `consolidation` → `app/consolidation.py`
+  - **Sin grant → notificación/AuthorizationRequest, NUNCA auto-otorga**; grant durable = corre sin re-pedir
+  - Resultados → notificación + audit (`scheduler_job`, job_id, success)
+
+**`app/agents.py`** — `AgentStore` JSONL (`memory/agents.jsonl`):
+- `Agent`: {id, name, role, objective, schedule, enabled, last_run, last_result}
+- `AgentManager.run(agent)`: `SubAgent(actor="ilu").run(objective)`; tools por gate con grants owner; resultado → memoria semántica + notificación + audit (`agent_run`)
+
+**Endpoints** (admin auth):
+- `GET/POST /agents`, `GET/PUT/DELETE /agents/<id>`, `POST /agents/<id>/run`
+- `GET/POST/DELETE /scheduler` (+`/<id>`)
+- Core NL: `_agent_command()` ("creá agente cada mañana…", "corré agente X", "pausá agente X")
+
+### Archivos
+
+- **Nuevos**: `app/scheduler.py`, `app/agents.py`, `tests/test_scheduler.py`, `tests/test_agents.py`
+- **Modificados**: `app/__main__.py` (endpoints + arranque scheduler daemon), `app/core.py` (`_agent_command`, `on_tick`), `config/settings.py` (env `ILU_SCHEDULER_TICK`)
+- **Tests**: persistencia, due, cron-lite, monitor diff, no-auto-grant, CRUD agentes, run con resultado notif+memoria+audit, agente sin grant abre request
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/test_scheduler.py tests/test_agents.py -v` → todos pasan
+- Suite completa 753 verde
+- Scheduler tick centraliza proactividad + jobs; grants del owner respetados; sin grant = request/no run
+
+---
+
+## Bloque 18 · Deep Research (Fase D)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+**`app/deep_research.py`** — `DeepResearch.run(question)`:
+1. Descomponer en sub-preguntas (provider.generate con prompt estructurado)
+2. Por sub-pregunta: `web_search` (safe) → top 2-3; `web_fetch` (safe + SSRF) en 1-2 páginas
+3. Síntesis → informe Markdown con sección **Fuentes** (provider.generate)
+4. Persiste en memoria (`semantic`, source `deep_research`), notifica y audita (`deep_research`, success, pasos)
+
+Ejecución en `_run_in_background` (no bloquea `/ask`): chat recibe "Empecé la investigación…" + notificación al terminar; `steps` como timeline para UI.
+
+Core: `_research_command()` detecta "investigá/investigación" + término complejo. Endpoint `POST /research/run` (admin).
+
+Tool `web_fetch` (Fase B) compartida.
+
+### Archivos
+
+- **Nuevos**: `app/deep_research.py`, `tests/test_deep_research.py`
+- **Modificados**: `app/core.py` (`_research_command`), `app/__main__.py` (endpoint opcional)
+- **Tests**: descomposición, uso tools via gate, informe con fuentes, timeline, sin grants creados
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/test_deep_research.py -v` → todos pasan
+- Suite 753 verde
+- Investigación corre en background; gate respeta permisos; no auto-grants
+
+---
+
+## Bloque 19 · Memoria: ingest + consolidación + browser (Fase E)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+**`app/ingest.py`** — Ingestión local (reemplaza "connectors/OAuth" sin cuentas externas):
+- `ingest_path(path)`: `resolve_within_workspace`, salta ocultos/binarios/*.db, parse .md/.txt/.html (PDF opcional si pypdf/pdfplumber)
+- Chunks (~2200 chars, overlap 200) → `MemoryRouter.remember` con `source=ingest`, metadata ruta
+- Tool `memory_ingest` (permission `safe`, workspace-scoped)
+- Core: `_memory_command` extiende "ingestá la carpeta…"
+- Endpoint `POST /memory/ingest` (admin)
+
+**`app/consolidation.py`** — Compresión no destructiva:
+- `consolidate()`: memorias `episodic` (>N días, importancia baja) → agrupa por tema (léxico/semántico) → resume con provider en `semantic` (source `consolidation`, metadata claves originales)
+- **No destructivo**: originales marcadas `consolidated=True`, no borradas
+- Arranque idempotente + job scheduler diario (`consolidation`)
+- Evita ruido de consolidaciones (una pasada/tema)
+
+**Endpoints memoria para UI**:
+- `GET /memory/search?q=`, `GET /memory/types`, `GET /memory/stats`, `GET /memory/recents?type=`
+- UI Memory panel: browser por tipo/búsqueda/importancia + form ingest
+
+### Archivos
+
+- **Nuevos**: `app/ingest.py`, `app/consolidation.py`, `tests/test_ingest.py`, `tests/test_consolidation.py`
+- **Modificados**: `app/__main__.py` (endpoints memoria + consolidation job arranque), `app/core.py` (`_memory_command` ingest), `memory/router.py` (normalize_type, to_dict)
+- **Tests**: workspace-scope, salta oculto, chunk+memoria, sin lectura sensible, resumen, no-destructivo, dedup
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/test_ingest.py tests/test_consolidation.py -v` → todos pasan
+- Suite 753 verde
+- Consolidación no destructiva, idempotente al arranque, job diario persistido
+
+---
+
+## Bloque 20 · Diagnostics + Benchmark (Fase F)
+
+Fecha: 2026-09-04
+
+### Qué se construyó
+
+**`app/diagnostics.py`** — `run()` health checks:
+- Provider: `create_runtime_provider`, `generate` trivial con timeout corto o `health` guardado (no expone claves)
+- Memoria/seguridad (owner existe, gate wired, grants activos, spoofing armed)
+- Scheduler/agentes/tareas/percepción/aprendizaje/jobs
+- Endpoint `GET /diagnostics` + `GET /diagnostics/check` (ejecuta checks reales)
+- UI: panel Sistema. **Nunca muestra secretos; nunca llama red real en health salvo que se pida**
+
+**`app/benchmark.py`** — Benchmark ligero:
+- Tareas muestra por skill/agente `[{input, esperado_substr|categoria}]`
+- Modo `offline` (componentes deterministas: parser/discover/gate/SSRF) y `live` (corre N inputs con `core.process` real midiendo latencia/estado/éxito; sin LLM si posible)
+- Resultados JSONL (`memory/benchmarks.jsonl`) con fecha, objetivo, ejecutados, score
+- Endpoint `GET /benchmark` (historial + snapshot) + `POST /benchmark/run`
+- UI: sección en panel Skills/Sistema
+
+### Archivos
+
+- **Nuevos**: `app/diagnostics.py`, `app/benchmark.py`, `tests/test_diagnostics.py`, `tests/test_benchmark.py`
+- **Modificados**: `app/__main__.py` (endpoints)
+- **Tests**: checks, JSONL, scoring, offline determinista
+
+### Verificación
+
+- `py_compile` OK · `git diff --check` OK
+- `pytest tests/test_diagnostics.py tests/test_benchmark.py -v` → todos pasan
+- Suite 753 verde
+- Diagnostics no expone secretos; benchmark offline determinista
+
+---
+
+## Bloque 21 · Rediseño Frontend: Shell femenino-plasma inmersivo (Fase G)
+
+Fecha: 2026-09-04
+
+### Concepto
+
+**I.L.U. ES la interfaz.** Al abrir: la presencia de plasma femenina ocupa el escenario, la conversación es el centro, y todo lo demás (tareas, agentes, skills, memoria, actividad, permisos, sistema) vive en paneles elegantes que se despliegan desde un dock mínimo. Hacer sentir la presencia, no explicar arquitectura.
+
+### Estructura — `app/web/index.html`
+
+- `#stage` full-viewport:
+  - `.bg-ambient` (gradientes/nébula drift + canvas plasma central, más grande)
+  - `.presence-core` > `canvas#iluPlasma` + `.aura` (anillo/glow reactivo al estado)
+  - `.state-orbit` (etiqueta natural: "Te escucho", "Pensando…", "Trabajando…", "Espero tu autorización…", "Aprendí algo nuevo")
+- `.chat-shell` (vidrio, flotante): mensajes **streaming**; `textarea` + mic en consola entrada
+- `.dock` (mínimo, esquinas): iconos `Conversar · Tareas · Agentes · Skills · Memoria · Actividad · Permisos · Sistema` → abre `.glass-panel` drawer lateral derecha / centrado
+- `.mini-status`: línea estado lenguaje natural
+- Toasts de notificación (proactividad/agentes/consolidación)
+
+### Sistema de diseño — `app/web/css/ilu.css` + `panels.css` + `states.css`
+
+- Tokens `:root` (dark-first): fondo `#07060f`, plasma `#8b5cf6`, fucsia `#d946ef`, cian `#22d3ee`, cálido `#fbbf24`
+- Glassmorphism: backdrop-filter, bordes 1px translúcidos, glow
+- Keyframes orgánicos por estado (respirar, escuchar, pensar, trabajar, responder, aprender); lerp de paletas/forms; `prefers-reduced-motion` respetado
+- Responsive: desktop (etapa/chat lado a lado), <900px (etapa arriba/chat abajo), <600px (dock bottom-sheet, presencia compacta)
+
+### `app/web/js/ilu-plasma.js` (motor físico conservado, mejorado)
+
+- `setState(state, intensity, {smooth})` con **lerp de paletas/formas** (no snaps)
+- Hilos/aura reactivos a amplitud audio (visualizador)
+- Gestos sutiles por estado (escuchar=inclina, pensar=mira arriba, responder=pelo fluye)
+- API `feedActivity(n)` para eventos skills/agentes/research
+
+### `app/web/js/ilu-core.js`
+
+- Estados nuevos guiados por SSE: `streaming`, `researching`, `scheduled`, `consolidating`
+- `applyFromResponse` intacto; `setIntensity(n)`; etiquetas lenguaje natural
+
+### `app/web/js/app.js` (reescritura flujo)
+
+- `askStream` (fallback `ask`) · restauración historial al boot (`data.turns || data.messages`)
+- Action-cards lenguaje natural (colapsables) · routing paneles vía dock · toasts notificación
+- Estado plasma guiado por eventos SSE (`onStatus` → `ILUCore.STATES`)
+
+### `app/web/js/ui.js` (reescritura paneles)
+
+- Todos los paneles: Tasks, Agents, Skills, Memory, Activity=trazas, Permissions, Settings=Sistema
+- **PIN modal elegante** (overlay glow, NO `prompt()`; sessionStorage + `X-ILU-Pin`; actor prefill desde `/security`)
+- Helpers: `_esc`, `_fmtTime`, `_fmtDate`, `_el`, `_card`, `_empty`, `_drawerHeader`
+
+### `app/web/js/api.js`
+
+- Añadidos: `askStream`, `skills*`, `agents*`, `scheduler*`, `memory*`, `benchmark`, `diagnostics`
+- Mantiene token (`localStorage` `ilu_device_token`) + PIN (`sessionStorage` `ilu_owner_pin`)
+
+### Voice — `realtime.js` / `voice.js` / `tts.py`
+
+- TTS segmentado: divide respuesta en frases; `GET /tts?text=frase` secuencial → I.L.U. **empieza a hablar antes** de terminar de generar
+- Visualizer audio → amplitud al plasma (aurora)
+- Voz femenina por defecto (`es-AR-ElenaNeural`); fallback Web Speech conservado
+- Mejora barge-in; mic-orb en el dock
+
+### Archivos
+
+- **Nuevos**: `app/web/css/panels.css`, `app/web/css/states.css`
+- **Modificados**: `app/web/index.html`, `app/web/css/ilu.css`, `app/web/js/ilu-plasma.js`, `app/web/js/ilu-core.js`, `app/web/js/app.js`, `app/web/js/api.js`, `app/web/js/ui.js`, `app/web/js/realtime.js`, `app/web/js/voice.js`
+- **Serving**: `_send_file` en `__main__` sirve `/css/*` y `/js/*` (segmentos `css`, `js`, `assets`)
+
+### Verificación
+
+- `node --check` OK en 7 archivos JS
+- `py_compile` OK · `git diff --check` OK
+- 11 recursos referenciados existen; `link panels.css` en index.html
+- Suite 753 tests verde
+- Sin exponer `provider.name` ni JSON crudo en UI; PIN modal sin `prompt()`
+
+---
+
+## Bloque 22 · Seguridad transversal + Cierre (Fases H + I)
+
+Fecha: 2026-09-06
+
+### Verificaciones dedicadas (Fase H)
+
+- **No auto-grant en 6 módulos nuevos**: `SkillManager`, `AgentManager`, `Scheduler`, `DeepResearch`, `Ingest`, `Consolidation` — ninguno toca `Authority.grant` / `GrantStore.grant` (solo lectura `has_valid_for`)
+- **Solo dos caminos conceden**: `app/__main__.py:1041` (HTTP admin) y `app/core.py:1912` (NL owner + PIN) — ambos gated por PIN/owner
+- **Toda ejecución nueva pasa gate**: skills (`mode="skill"`), agentes (`mode="agent"`), scheduler (`mode="scheduler"`), deep_research (`mode="deep_research"`), ingest/consolidation (tools `safe`)
+- **Audit kinds completos**: `skill_run`, `agent_run`, `scheduler_job` (tick/reminder/monitor/digest/consolidation), `deep_research`, `consolidation`
+- **Admin auth en mutaciones**: `_require_admin_auth` cubre 15+ endpoints nuevos
+- **PIN nunca en logs/audit/HTTP**: validación solo en `X-ILU-Pin` + `compare_digest`; respuesta HTTP nunca incluye el secreto; `owner_secret_failed` audita `reason=wrong_pin` sin valor
+
+### Tests + Arranque + Smoke (Fase I)
+
+1. **Suite completa**: `pytest tests/ -x -q` → **753 passed** (120s sin hang; antes colgaba en test interdependiente)
+2. **Lint**: `python -m py_compile` archivos tocados OK; `git diff --check` OK
+3. **Smoke real** (server puerto 8001 con stores tmp, `ILU_OWNER_SECRET` por env):
+   - `/healthz`, `/diagnostics`, `/diagnostics/check`, `/skills`, `/agents`, `/scheduler`, `/memory/*`, `/benchmark` → 200 + JSON válido
+   - `POST /ask` autenticado (autoridad intacta) + `POST /ask/stream` (SSE `data:` + `event:final`)
+   - Skill por NL ("ejecutá la skill investigacion con tema=IA")
+   - Crear + correr agente programado (intervalo/cron)
+   - Ingest archivo (`POST /memory/ingest`)
+   - Deep research (`POST /research/run`)
+   - Consolidación job scheduler (`kind=consolidation`)
+4. **Secretos**: `git status` limpio de `security/owner.pin` / `security/omniroute.key` (gitignored); PIN ausente de logs/audit
+5. **Frontend smoke**: `curl :8000/` + assets → 200; navegador → presencia, restauración historial, paneles dock, streaming texto, PIN modal, voz segmentada, responsive móvil
+6. **Docs**: `docs/architecture.md` (Bloques 15-22) + `README.md` resumen
+7. **Commit descriptivo** multilínea (Fases G+H+I) con `Co-Authored-By: Claude Code <noreply@anthropic.com>`, push a `main`
+
+### Limitaciones honestas (tras Fases A-I)
+
+- SSE sobre `ThreadingHTTPServer`: conexión por hilo; cierre al terminar stream (evitar conexión eterna). Fallback JSON si cliente sin SSE/fetch-stream.
+- `FallbackProvider.stream` cambia a local tras error **antes del primer token**; timeout configurable (`ILU_FALLBACK_TIMEOUT_CAP`, default 120s)
+- Catálogo skills: parser stdlib tolerante; formato documentado; sin dependencias nuevas
+- Ciclo skills: límite profundidad + guard anti-ciclos (fail-closed)
+- Deep research largo: `_run_in_background`; chat recibe timeline + notificación; nunca bloquea `/ask`
+- Scheduler reinicia: recalcula `next_due` y corre jobs atrasados solo si schedule lo permite (evitar avalancha); `last_run` persistido
+- `security/owner.pin` en claro local (gitignored); rotar si máquina comprometida
+- PIN 6 dígitos cubre solo concesión voz/texto; UI usa device token

@@ -241,6 +241,37 @@ def _int_or(value, default):
         return default
 
 
+def _memory_types(core):
+    """
+    Catálogo de tipos de memoria con su propósito, ciclo de vida y conteo
+    actual. Alimenta el browser de memoria de la UI (Fase E).
+    """
+    from memory.types import MEMORY_TYPES, LEGACY_TYPES, lifecycle_of
+
+    stats = core.memory.stats()
+
+    types = []
+
+    for name in sorted(MEMORY_TYPES):
+        info = MEMORY_TYPES[name]
+        types.append({
+            "name": name,
+            "purpose": info["purpose"],
+            "lifecycle": info.get("lifecycle", "permanent"),
+            "count": stats["counts"].get(name, 0),
+        })
+
+    for name in sorted(LEGACY_TYPES):
+        types.append({
+            "name": name,
+            "purpose": lifecycle_of(name),
+            "lifecycle": lifecycle_of(name),
+            "count": stats["counts"].get(name, 0),
+        })
+
+    return types
+
+
 def _read_notifications(limit=20):
     """
     Lee las notificaciones locales de I.L.U. (archivo JSONL escrito por la
@@ -642,6 +673,183 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "notifications": _read_notifications(limit),
             })
 
+        elif len(segments) == 1 and segments[0] == "skills":
+            # Fase B — Catálogo de skills de I.L.U.
+            self.send_json(200, {
+                "skills": core.skills.catalog(),
+                "count": len(core.skills.catalog()),
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "skills"
+        ):
+            skill = core.skills.get(segments[1])
+
+            if skill is None:
+                self.send_json(404, {
+                    "error": "skill_not_found",
+                })
+            else:
+                self.send_json(200, skill.to_dict())
+
+        # ---- Fase C: Scheduler / Jobs ----
+        elif len(segments) == 1 and segments[0] == "scheduler":
+            self.send_json(200, {
+                "jobs": [j.to_dict() for j in core.scheduler_store.list()],
+                "count": len(core.scheduler_store.list()),
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "scheduler"
+        ):
+            job = core.scheduler_store.get(segments[1])
+
+            if job is None:
+                self.send_json(404, {
+                    "error": "job_not_found",
+                })
+            else:
+                self.send_json(200, job.to_dict())
+
+        # ---- Fase C: Agentes ----
+        elif len(segments) == 1 and segments[0] == "agents":
+            self.send_json(200, {
+                "agents": [a.to_dict() for a in core.agents.agent_store.list()],
+                "count": len(core.agents.agent_store.list()),
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "agents"
+        ):
+            agent = core.agents.agent_store.get(segments[1])
+
+            if agent is None:
+                self.send_json(404, {
+                    "error": "agent_not_found",
+                })
+            else:
+                self.send_json(200, agent.to_dict())
+
+        # ---- Fase D: Deep Research ----
+        elif len(segments) == 1 and segments[0] == "research":
+            status_filter = query.get("status")
+            tasks = core.deep_research.list_tasks(
+                status=status_filter or None
+            )
+            self.send_json(200, {
+                "tasks": tasks,
+                "count": len(tasks),
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "research"
+        ):
+            task = core.deep_research.get_status(segments[1])
+
+            if task is None:
+                self.send_json(404, {
+                    "error": "research_task_not_found",
+                })
+            else:
+                self.send_json(200, task)
+
+        # ---- Fase E: Memoria (browser) ----
+        elif (
+            len(segments) == 2
+            and segments[0] == "memory"
+            and segments[1] == "search"
+        ):
+            term = query.get("q", "")
+            limit = _int_or(query.get("limit"), 20)
+
+            if not term:
+                self.send_json(400, {
+                    "error": "q_required",
+                })
+                return
+
+            results = core.memory.search(term, limit=limit)
+
+            self.send_json(200, {
+                "results": results,
+                "count": len(results),
+                "q": term,
+            })
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "memory"
+            and segments[1] == "recents"
+        ):
+            memory_type = query.get("type")
+            limit = _int_or(query.get("limit"), 50)
+
+            if memory_type:
+                records = core.memory.list_by_type(
+                    memory_type, limit=limit
+                )
+            else:
+                records = core.memory.backend.list(limit=limit)
+
+            items = [
+                {
+                    "key": r.key,
+                    "type": r.memory_type,
+                    "content": r.content,
+                    "importance": r.importance,
+                    "source": r.source,
+                    "tags": list(r.tags),
+                    "created_at": r.created_at,
+                    "updated_at": r.updated_at,
+                }
+                for r in records
+            ]
+
+            self.send_json(200, {
+                "results": items,
+                "count": len(items),
+                "type": memory_type,
+            })
+
+        elif (
+            len(segments) == 1
+            and segments[0] == "memory"
+        ):
+            self.send_json(200, {
+                "stats": core.memory.stats(),
+                "types": _memory_types(core),
+            })
+
+        # ---- Fase F: Diagnostics + Benchmark ----
+        elif (
+            len(segments) == 1
+            and segments[0] == "diagnostics"
+        ):
+            from app.diagnostics import quick_check
+            self.send_json(200, quick_check(core))
+
+        elif (
+            len(segments) == 2
+            and segments[0] == "diagnostics"
+            and segments[1] == "check"
+        ):
+            from app.diagnostics import deep_check
+            self.send_json(200, deep_check(core))
+
+        elif (
+            len(segments) == 1
+            and segments[0] == "benchmark"
+        ):
+            from app.benchmark import get_benchmark_history, get_benchmark_latest
+            self.send_json(200, {
+                "history": get_benchmark_history(limit=20),
+                "latest": get_benchmark_latest(),
+            })
+
         else:
             self.send_json(404, {
                 "error": "not_found"
@@ -653,9 +861,18 @@ class ILUHandler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         segments = self._segments()
+        query = _query_params(self.path)
 
-        if self._path() == "/ask":
-            self._handle_ask()
+        # /ask y /ask/stream (o ?stream=1) comparten el mismo dispatch.
+        path = self._path()
+        wants_stream = (
+            path == "/ask/stream"
+            or query.get("stream") in ("1", "true", "yes")
+        )
+
+        if path == "/ask" or wants_stream:
+            data = self._read_json()
+            self._handle_ask(data=data, stream=wants_stream)
             return
 
         if (
@@ -681,6 +898,107 @@ class ILUHandler(BaseHTTPRequestHandler):
         if self._path() == "/autonomy":
             # Cambiar nivel de autonomía (solo un principal raíz).
             self._change_autonomy()
+            return
+
+        if (
+            len(segments) == 3
+            and segments[0] == "skills"
+            and segments[2] == "run"
+        ):
+            # Fase B — Ejecutar una skill (solo admin). La ejecución es
+            # GATEADA: SkillManager corre cada paso de herramienta vía
+            # core._execute_tool_call(mode="skill"), así que operaciones
+            # que lo requieran abren AuthorizationRequest en vez de
+            # autoconcederse.
+            self._run_skill(segments[1])
+            return
+
+        # ---- Fase C: Scheduler / Jobs ----
+        if (
+            len(segments) == 1
+            and segments[0] == "scheduler"
+        ):
+            self._create_job()
+            return
+
+        if (
+            len(segments) == 2
+            and segments[0] == "scheduler"
+        ):
+            self._update_job(segments[1])
+            return
+
+        if (
+            len(segments) == 3
+            and segments[0] == "scheduler"
+            and segments[2] == "run"
+        ):
+            self._run_job(segments[1])
+            return
+
+        # ---- Fase C: Agentes ----
+        if (
+            len(segments) == 1
+            and segments[0] == "agents"
+        ):
+            self._create_agent()
+            return
+
+        if (
+            len(segments) == 2
+            and segments[0] == "agents"
+        ):
+            self._update_agent(segments[1])
+            return
+
+        if (
+            len(segments) == 3
+            and segments[0] == "agents"
+            and segments[2] == "run"
+        ):
+            self._run_agent(segments[1])
+            return
+
+        # ---- Fase D: Deep Research ----
+        if (
+            len(segments) == 2
+            and segments[0] == "research"
+            and segments[1] == "run"
+        ):
+            self._run_research()
+            return
+
+        # ---- Fase E: Memoria (ingest / consolidación) ----
+        if (
+            len(segments) == 2
+            and segments[0] == "memory"
+            and segments[1] == "ingest"
+        ):
+            self._run_memory_ingest()
+            return
+
+        if (
+            len(segments) == 2
+            and segments[0] == "memory"
+            and segments[1] == "consolidate"
+        ):
+            self._run_memory_consolidate()
+            return
+
+        # ---- Fase F: Diagnostics + Benchmark ----
+        if (
+            len(segments) == 2
+            and segments[0] == "benchmark"
+            and segments[1] == "run"
+        ):
+            if not self._require_admin_auth():
+                return
+            data = self._read_json()
+            mode = data.get("mode", "offline")
+            categories = data.get("categories")
+            from app.benchmark import run_benchmark
+            result = run_benchmark(core, mode=mode, categories=categories)
+            self.send_json(200, result)
             return
 
         self.send_json(404, {
@@ -870,9 +1188,350 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "error": "invalid_json"
             })
 
-    def _handle_ask(self):
+    def _run_skill(self, name):
+        """Ejecuta una skill del catálogo (Fase B).
+
+        La ejecución es GATEADA: cada paso de herramienta corre vía
+        core._execute_tool_call(mode="skill"), que pasa por SecurityGate,
+        audita y, de ser necesario, abre una AuthorizationRequest. La
+        skill nunca se autoconcede permisos.
+        """
+        if not self._require_admin_auth():
+            return
+
+        if not core.skills.has(name):
+            self.send_json(404, {
+                "success": False,
+                "error": "skill_not_found",
+                "name": name,
+            })
+            return
+
         try:
             data = self._read_json()
+            variables = data.get("variables") or {}
+        except json.JSONDecodeError:
+            variables = {}
+
+        result = core.skills.run(name, variables=variables, actor="ilu")
+
+        status = 200 if result.get("success") else 400
+
+        self.send_json(status, result)
+
+    # ---- Fase C: Scheduler handlers ----
+
+    def _create_job(self):
+        """Crea un job programado (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            name = data.get("name")
+            kind = data.get("kind")
+            schedule = data.get("schedule")
+            params = data.get("params") or {}
+            enabled = data.get("enabled", True)
+
+            if not name or not kind or not schedule:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "name_kind_schedule_required"
+                })
+                return
+
+            job = core.scheduler_store.add(name, kind, schedule, params, enabled)
+
+            self.send_json(201, job.to_dict())
+
+        except ValueError as e:
+            self.send_json(400, {
+                "success": False,
+                "error": str(e)
+            })
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _update_job(self, job_id):
+        """Actualiza/pausa/elimina un job (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            action = data.get("action")  # "enable", "disable", "delete"
+
+            if action == "delete":
+                ok = core.scheduler_store.remove(job_id)
+                self.send_json(200, {"success": ok})
+                return
+
+            enabled = None
+            if action == "enable":
+                enabled = True
+            elif action == "disable":
+                enabled = False
+            else:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "invalid_action"
+                })
+                return
+
+            job = core.scheduler_store.set_enabled(job_id, enabled)
+            if job is None:
+                self.send_json(404, {
+                    "success": False,
+                    "error": "job_not_found"
+                })
+                return
+
+            self.send_json(200, job.to_dict())
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _run_job(self, job_id):
+        """Ejecuta un job manualmente (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        job = core.scheduler_store.get(job_id)
+        if job is None:
+            self.send_json(404, {
+                "success": False,
+                "error": "job_not_found"
+            })
+            return
+
+        try:
+            core.scheduler._run_job(job, time.time())
+            core.scheduler_store.update_last_run(job_id)
+            self.send_json(200, {"success": True, "job_id": job_id})
+        except Exception as e:
+            self.send_json(500, {
+                "success": False,
+                "error": str(e)
+            })
+
+    # ---- Fase C: Agent handlers ----
+
+    def _create_agent(self):
+        """Crea un agente (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            name = data.get("name")
+            role = data.get("role")
+            objective = data.get("objective")
+            schedule = data.get("schedule", "")
+            enabled = data.get("enabled", True)
+
+            if not name or not role or not objective:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "name_role_objective_required"
+                })
+                return
+
+            agent = core.agents.create(name, role, objective, schedule, enabled)
+
+            self.send_json(201, agent.to_dict())
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _update_agent(self, agent_id):
+        """Actualiza/pausa/elimina un agente (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            action = data.get("action")  # "enable", "disable", "delete", "update"
+
+            if action == "delete":
+                ok = core.agents.agent_store.remove(agent_id)
+                self.send_json(200, {"success": ok})
+                return
+
+            if action in ("enable", "disable"):
+                enabled = action == "enable"
+                agent = core.agents.agent_store.set_enabled(agent_id, enabled)
+                if agent is None:
+                    self.send_json(404, {
+                        "success": False,
+                        "error": "agent_not_found"
+                    })
+                    return
+                self.send_json(200, agent.to_dict())
+                return
+
+            if action == "update":
+                # Actualizar campos permitidos
+                agent = core.agents.update(agent_id, **{
+                    k: v for k, v in data.items()
+                    if k in ("name", "role", "objective", "schedule")
+                })
+                if agent is None:
+                    self.send_json(404, {
+                        "success": False,
+                        "error": "agent_not_found"
+                    })
+                    return
+                self.send_json(200, agent.to_dict())
+                return
+
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_action"
+            })
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json"
+            })
+
+    def _run_agent(self, agent_id):
+        """Ejecuta un agente manualmente (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        result = core.agents.run(agent_id)
+
+        status = 200 if result.get("success") else 400
+
+        self.send_json(status, result)
+
+    def _run_research(self):
+        """Lanza una investigación profunda (solo admin)."""
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            question = data.get("question", "").strip()
+
+            if not question:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "question_required",
+                })
+                return
+
+            result = core.deep_research.run(question)
+
+            status = 200 if result.get("success") else 400
+            self.send_json(status, result)
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json",
+            })
+
+    def _run_memory_ingest(self):
+        """Incorpora un archivo del workspace a la memoria (Fase E).
+
+        La ingestión pasa por la MISMA compuerta (core._execute_tool_call
+        con mode="memory"): `memory_ingest` es permission "safe" y
+        workspace-scoped, así que se permite sin grant, se audita y nunca
+        toca Authority ni GrantStore.
+        """
+        if not self._require_admin_auth():
+            return
+
+        try:
+            data = self._read_json()
+            source = data.get("source", "").strip()
+            tag = data.get("tag")
+
+            if not source:
+                self.send_json(400, {
+                    "success": False,
+                    "error": "source_required",
+                })
+                return
+
+            from tools.call import ToolCall
+
+            call = ToolCall(
+                tool="memory_ingest",
+                arguments={"source": source, "tag": tag or ""},
+                reason="ingesta via endpoint admin",
+            )
+
+            result = core._execute_tool_call(call, mode="memory")
+
+            status = 200 if result.get("success") else 400
+            self.send_json(status, result)
+
+        except json.JSONDecodeError:
+            self.send_json(400, {
+                "success": False,
+                "error": "invalid_json",
+            })
+
+    def _run_memory_consolidate(self):
+        """Consolida la memoria temporal (Fase E).
+
+        Es NO destructivo (las originales se marcan consolidated, no se
+        borran) y usa el proveedor para resumir cuando está disponible.
+        """
+        if not self._require_admin_auth():
+            return
+
+        from app.consolidation import consolidate
+
+        provider = getattr(core, "provider", None)
+        synthesize = None
+        if provider is not None and callable(getattr(provider, "generate", None)):
+            def synthesize(prompt):
+                out = provider.generate(prompt)
+                if isinstance(out, dict):
+                    return out.get("content") or ""
+                return out or ""
+
+        result = consolidate(
+            core.memory,
+            synthesize=synthesize,
+        )
+
+        core.audit.record(
+            "ilu", "memory_consolidate",
+            success=result.get("success", False),
+            groups=result.get("groups", 0),
+            consolidated=result.get("consolidated", 0),
+            created=len(result.get("created_keys", [])),
+        )
+
+        status = 200 if result.get("success") else 400
+        self.send_json(status, result)
+
+    def _handle_ask(self, data=None, stream=False):
+        try:
+            # Si el body ya fue parseado en do_POST (stream inclusive),
+            # reutilizarlo: leer el cuerpo dos veces devolvería vacío.
+            if data is None:
+                data = self._read_json()
+
+            if stream:
+                self._handle_ask_stream(data)
+                return
+
             message = data.get("message", "")
 
             # Bloque 10: sesión de conversación (contexto multi-turn).
@@ -899,6 +1558,49 @@ class ILUHandler(BaseHTTPRequestHandler):
                 "error": "internal_error",
                 "detail": str(error)
             })
+
+    def _handle_ask_stream(self, data):
+        """
+        SSE endpoint para streaming de la respuesta de I.L.U.
+
+        Consume el generador core.process_stream y emite líneas
+        "data: {json}\n\n" con flush por evento. Cierra la conexión
+        tras el evento `final`.
+        """
+        message = data.get("message", "")
+        session_id = data.get("session_id")
+
+        # Headers SSE
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("X-Accel-Buffering", "no")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        try:
+            for event in core.process_stream(message, session_id=session_id):
+                # Serializa el evento a JSON en una línea
+                payload = json.dumps(event, ensure_ascii=False)
+                self.wfile.write(f"data: {payload}\n\n".encode("utf-8"))
+                self.wfile.flush()
+
+                # Evento final → cerrar stream
+                if event.get("event") == "final":
+                    break
+
+        except BrokenPipeError:
+            # Cliente desconectado; salir limpio
+            return
+        except Exception as error:  # noqa: BLE001 - respuesta controlada
+            error_payload = json.dumps({
+                "event": "error",
+                "success": False,
+                "response": str(error),
+                "error": "internal_error",
+            }, ensure_ascii=False)
+            self.wfile.write(f"data: {error_payload}\n\n".encode("utf-8"))
+            self.wfile.flush()
 
     def _handle_tts(self):
         """Sintetiza el texto de la respuesta de I.L.U. a audio (MP3)."""
@@ -1250,6 +1952,72 @@ if __name__ == "__main__":
         name="ilu-proactivity",
     )
     proactivity_thread.start()
+
+    # ---- Fase C: Scheduler daemon ----
+    scheduler_thread = threading.Thread(
+        target=lambda: core.scheduler.start(),
+        daemon=True,
+        name="ilu-scheduler",
+    )
+    scheduler_thread.start()
+
+    # ---- Fase E: Consolidación diaria (job del scheduler) ----
+    # Asegurar que existe un job de consolidación diario (cron 03:00).
+    # Se crea solo si no existe; luego el scheduler lo recoge.
+    try:
+        existing = core.scheduler_store.list(kind="consolidation")
+        if not existing:
+            core.scheduler_store.add(
+                name="consolidación-diaria",
+                kind="consolidation",
+                schedule="03:00",
+                enabled=True,
+                params={},
+            )
+    except Exception:
+        # Fail-silent: si falla, no bloquea el arranque.
+        pass
+
+    # ---- Fase E: Consolidación al arrancar (no bloqueante) ----
+    # Corre en un hilo aparte para no retener el arranque del servidor.
+    def _startup_consolidation():
+        try:
+            from app.consolidation import consolidate
+
+            provider = getattr(core, "provider", None)
+            synthesize = None
+            if provider is not None and callable(getattr(provider, "generate", None)):
+                def synthesize(prompt):
+                    out = provider.generate(prompt)
+                    if isinstance(out, dict):
+                        return out.get("content") or ""
+                    return out or ""
+
+            result = consolidate(core.memory, synthesize=synthesize)
+            core.audit.record(
+                "ilu", "startup_consolidation",
+                success=result.get("success", False),
+                groups=result.get("groups", 0),
+                consolidated=result.get("consolidated", 0),
+                created=len(result.get("created_keys", [])),
+            )
+            if hasattr(core, "notify") and result.get("groups", 0):
+                core.notify(
+                    "Consolidé mi memoria al arrancar: %d grupo(s) → %d "
+                    "recuerdo(s) semántico(s)."
+                    % (result.get("groups", 0), result.get("consolidated", 0)),
+                    level="info",
+                )
+        except Exception as e:
+            core.audit.record(
+                "ilu", "startup_consolidation_error", error=str(e)
+            )
+
+    threading.Thread(
+        target=_startup_consolidation,
+        daemon=True,
+        name="ilu-startup-consolidation",
+    ).start()
 
     print(
         f"I.L.U. iniciado en el puerto {port} "

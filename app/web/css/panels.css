@@ -1,0 +1,708 @@
+/* ===================================================================
+   I.L.U. — Panels & Overlays (drawers + PIN modal + cards)
+
+   Complementa ilu.css con los componentes del dock glass.
+   Estructura:
+     1. Panel drawer (lateral derecho, glass)
+     2. Cards genéricos (.glass-card, .glass-card-body, etc.)
+     3. Controles del drawer (toolbar, input, btn, btn-row, chips)
+     4. Estados visuales (status-badge, progress, row-line)
+     5. PIN modal (overlay + glow + form)
+   Degrada gracefully: backdrop-filter es progresivo.
+   =================================================================== */
+
+/* ===================================================================
+   PANEL DRAWER — overlay + drawer lateral derecho (glass)
+   =================================================================== */
+
+.panel-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(7, 6, 15, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 40;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ilu-ease);
+}
+
+.panel-drawer-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.panel-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(440px, 92vw);
+  background: var(--ilu-glass-bg);
+  backdrop-filter: var(--ilu-glass-blur);
+  border-left: 1px solid var(--ilu-glass-border);
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.4s var(--ilu-ease);
+  box-shadow:
+    -12px 0 48px rgba(0, 0, 0, 0.5),
+    -1px 0 0 rgba(139, 92, 246, 0.08) inset;
+  overflow: hidden;
+}
+
+.panel-drawer.visible {
+  transform: translateX(0);
+}
+
+.panel-drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--ilu-gap) var(--ilu-gap-lg);
+  border-bottom: 1px solid var(--ilu-glass-border);
+  background: rgba(139, 92, 246, 0.04);
+}
+
+.panel-drawer-title {
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ilu-text);
+}
+
+.panel-drawer-close {
+  background: transparent;
+  border: 1px solid var(--ilu-glass-border);
+  color: var(--ilu-text-secondary);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  cursor: pointer;
+  font-size: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--ilu-transition-fast);
+}
+
+.panel-drawer-close:hover {
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+}
+
+.panel-drawer-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--ilu-gap) var(--ilu-gap-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ilu-gap);
+}
+
+/* ===================================================================
+   PIN MODAL — overlay elegante (no prompt())
+   =================================================================== */
+
+.pin-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(3, 2, 12, 0.7);
+  backdrop-filter: blur(6px);
+  z-index: 50;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ilu-ease);
+}
+
+.pin-modal-overlay.visible {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.pin-modal {
+  position: fixed;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%) scale(0.96);
+  width: min(420px, 90vw);
+  background: var(--ilu-bg-elevated);
+  border: 1px solid var(--ilu-glass-border);
+  border-radius: var(--ilu-radius-xl);
+  z-index: 55;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.3s var(--ilu-ease), transform 0.3s var(--ilu-ease);
+  box-shadow:
+    0 16px 48px rgba(0, 0, 0, 0.6),
+    0 0 60px rgba(139, 92, 246, 0.15);
+}
+
+.pin-modal.visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.pin-modal-glow {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(139, 92, 246, 0.15) 0%, transparent 60%),
+    radial-gradient(ellipse at 50% 100%, rgba(217, 70, 239, 0.1) 0%, transparent 50%);
+  pointer-events: none;
+}
+
+.pin-modal-header {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: var(--ilu-gap-lg) var(--ilu-gap-lg) var(--ilu-gap-sm);
+}
+
+.pin-modal-icon {
+  color: var(--ilu-plasma);
+  flex-shrink: 0;
+}
+
+.pin-modal-header h2,
+#pinModalTitle {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--ilu-text);
+}
+
+.pin-modal-body {
+  position: relative;
+  padding: 0 var(--ilu-gap-lg) var(--ilu-gap-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--ilu-gap);
+}
+
+.pin-modal-body p,
+#pinModalMessage {
+  font-size: 13px;
+  color: var(--ilu-text-secondary);
+}
+
+.pin-input-group {
+  display: flex;
+  gap: var(--ilu-gap-sm);
+}
+
+.pin-input {
+  flex: 1;
+  background: var(--ilu-bg-input);
+  border: 1px solid var(--ilu-border);
+  border-radius: var(--ilu-radius-sm);
+  padding: 12px 14px;
+  color: var(--ilu-text);
+  font-size: 16px;
+  letter-spacing: 0.15em;
+  text-align: center;
+  outline: none;
+  transition: border-color var(--ilu-transition-fast), box-shadow var(--ilu-transition-fast);
+}
+
+.pin-input:focus {
+  border-color: var(--ilu-border-strong);
+  box-shadow: 0 0 0 3px var(--ilu-plasma-soft);
+}
+
+.pin-input::placeholder {
+  letter-spacing: 0.3em;
+}
+
+.pin-modal-actions {
+  display: flex;
+  gap: var(--ilu-gap-sm);
+  justify-content: flex-end;
+}
+
+.pin-modal-btn {
+  padding: 10px 18px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  font-family: var(--ilu-font);
+  cursor: pointer;
+  transition: var(--ilu-transition-fast);
+  border: 1px solid transparent;
+}
+
+.pin-modal-btn-cancel {
+  background: transparent;
+  color: var(--ilu-text-secondary);
+  border-color: var(--ilu-glass-border);
+}
+
+.pin-modal-btn-cancel:hover {
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text);
+}
+
+.pin-modal-btn-confirm {
+  background: linear-gradient(135deg, var(--ilu-core), var(--ilu-plasma));
+  color: white;
+  border: none;
+}
+
+.pin-modal-btn-confirm:hover {
+  transform: scale(1.03);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+}
+
+/* ===================================================================
+   GLASS CARD — componente base de cada ítem en un drawer
+   =================================================================== */
+
+.glass-card {
+  background: rgba(19, 18, 36, 0.6);
+  backdrop-filter: blur(8px);
+  border: 1px solid var(--ilu-glass-border);
+  border-radius: var(--ilu-radius);
+  padding: var(--ilu-gap);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  transition: border-color var(--ilu-transition-fast), box-shadow var(--ilu-transition-fast);
+}
+
+.glass-card:hover {
+  border-color: var(--ilu-border-strong);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.glass-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.glass-card-icon {
+  font-size: 15px;
+  color: var(--ilu-plasma);
+  flex-shrink: 0;
+}
+
+.glass-card-title {
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ilu-text);
+}
+
+.glass-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.glass-card-text {
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ilu-text-secondary);
+}
+
+.glass-card-text.dim {
+  font-size: 11px;
+  color: var(--ilu-text-dim);
+}
+
+/* ===================================================================
+   DRAWER CONTROLS
+   =================================================================== */
+
+.drawer-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ilu-gap-sm);
+  font-size: 12px;
+  color: var(--ilu-text-dim);
+  padding-bottom: var(--ilu-gap-sm);
+  border-bottom: 1px solid var(--ilu-glass-border);
+  margin-bottom: var(--ilu-gap-sm);
+}
+
+.drawer-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.drawer-toolbar-btn {
+  background: var(--ilu-bg-card);
+  border: 1px solid var(--ilu-glass-border);
+  color: var(--ilu-text-secondary);
+  padding: 4px 10px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 11px;
+  font-family: var(--ilu-font);
+  cursor: pointer;
+  transition: var(--ilu-transition-fast);
+}
+
+.drawer-toolbar-btn:hover {
+  background: var(--ilu-bg-input);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+}
+
+.panel-row {
+  display: flex;
+  gap: var(--ilu-gap-sm);
+  align-items: center;
+}
+
+.panel-row .panel-input { flex: 1; }
+
+.panel-input {
+  background: var(--ilu-bg-input);
+  border: 1px solid var(--ilu-border);
+  border-radius: var(--ilu-radius-sm);
+  padding: 10px 12px;
+  color: var(--ilu-text);
+  font-size: 13px;
+  font-family: var(--ilu-font);
+  outline: none;
+  transition: border-color var(--ilu-transition-fast), box-shadow var(--ilu-transition-fast);
+}
+
+.panel-input:focus {
+  border-color: var(--ilu-border-strong);
+  box-shadow: 0 0 0 3px var(--ilu-plasma-soft);
+}
+
+.panel-input::placeholder {
+  color: var(--ilu-text-dim);
+}
+
+.panel-btn {
+  border: 1px solid var(--ilu-glass-border);
+  background: var(--ilu-bg-card);
+  color: var(--ilu-text-secondary);
+  padding: 8px 14px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 13px;
+  font-weight: 500;
+  font-family: var(--ilu-font);
+  cursor: pointer;
+  transition: var(--ilu-transition-fast);
+  white-space: nowrap;
+}
+
+.panel-btn:hover {
+  background: var(--ilu-bg-input);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+}
+
+.panel-btn.primary {
+  background: linear-gradient(135deg, var(--ilu-core), var(--ilu-plasma));
+  color: white;
+  border: none;
+}
+
+.panel-btn.primary:hover {
+  transform: scale(1.02);
+  box-shadow: 0 4px 16px rgba(139, 92, 246, 0.4);
+}
+
+.panel-btn.danger {
+  color: var(--ilu-error);
+  border-color: rgba(239, 68, 68, 0.25);
+}
+
+.panel-btn.danger:hover {
+  background: var(--ilu-error-soft);
+}
+
+.panel-btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ilu-plasma);
+  width: 100%;
+  text-align: center;
+}
+
+.panel-btn.ghost:hover {
+  background: var(--ilu-plasma-soft);
+}
+
+.panel-btn.small {
+  padding: 6px 10px;
+  font-size: 12px;
+  border-radius: 8px;
+}
+
+.panel-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}
+
+.panel-btn-row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.panel-loading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: var(--ilu-gap-lg);
+  justify-content: center;
+  color: var(--ilu-text-dim);
+  font-size: 13px;
+}
+
+.pulse-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ilu-plasma);
+  animation: ilu-pulse 1.2s var(--ilu-ease) infinite;
+}
+
+@keyframes ilu-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50%      { transform: scale(1.5); opacity: 0.4; }
+}
+
+.panel-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.create-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-bottom: var(--ilu-gap);
+  border-bottom: 1px solid var(--ilu-glass-border);
+}
+
+/* ===================================================================
+   MEMORY CHIPS
+   =================================================================== */
+
+.memory-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.memory-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--ilu-font-mono);
+  background: var(--ilu-plasma-soft);
+  border: 1px solid var(--ilu-border);
+  color: var(--ilu-text-secondary);
+  cursor: pointer;
+  transition: var(--ilu-transition-fast);
+}
+
+.memory-chip:hover {
+  background: var(--ilu-glass-bg);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+}
+
+/* ===================================================================
+   SEARCH / TYPE RESULTS WRAPPER
+   =================================================================== */
+
+.search-results,
+.type-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ilu-gap-sm);
+}
+
+/* ===================================================================
+   STATUS BADGE + PROGRESS
+   =================================================================== */
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-badge.active {
+  background: var(--ilu-ok-soft);
+  color: var(--ilu-ok);
+  border: 1px solid rgba(34, 197, 94, 0.2);
+}
+
+.status-badge.disabled {
+  background: rgba(94, 92, 125, 0.2);
+  color: var(--ilu-text-dim);
+  border: 1px solid rgba(94, 92, 125, 0.2);
+}
+
+.status-badge.pending {
+  background: var(--ilu-warm-soft);
+  color: var(--ilu-warm);
+  border: 1px solid rgba(251, 191, 36, 0.25);
+}
+
+.status-badge.danger {
+  background: var(--ilu-error-soft);
+  color: var(--ilu-error);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+}
+
+.progress-track {
+  flex: 1;
+  height: 6px;
+  border-radius: 999px;
+  background: rgba(139, 92, 246, 0.12);
+  overflow: hidden;
+}
+
+.progress-track.thin {
+  height: 4px;
+}
+
+.progress-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--ilu-core), var(--ilu-plasma));
+  transition: width var(--ilu-transition);
+}
+
+.task-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--ilu-text-dim);
+}
+
+/* ===================================================================
+   ROW LINE — generic label + value row
+   =================================================================== */
+
+.row-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ilu-text-secondary);
+  padding: 6px 0;
+  border-bottom: 1px solid rgba(139, 92, 246, 0.06);
+}
+
+.row-line:last-child { border-bottom: none; }
+.row-line .dim { color: var(--ilu-text-dim); font-size: 12px; }
+
+.bench-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--ilu-text-secondary);
+  padding: 8px 0;
+}
+
+.bench-row .dim { color: var(--ilu-text-dim); font-size: 12px; }
+
+/* ===================================================================
+   AUTONOMY / GRANTS / AUTH REQUESTS (Permissions)
+   =================================================================== */
+
+.mode-line {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--ilu-plasma);
+}
+
+.mode-buttons {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0;
+}
+
+.mode-btn {
+  flex: 1;
+  background: var(--ilu-bg-card);
+  border: 1px solid var(--ilu-glass-border);
+  color: var(--ilu-text-secondary);
+  padding: 8px 10px;
+  border-radius: var(--ilu-radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  font-family: var(--ilu-font);
+  cursor: pointer;
+  transition: var(--ilu-transition-fast);
+}
+
+.mode-btn:hover {
+  background: var(--ilu-bg-input);
+  color: var(--ilu-text);
+  border-color: var(--ilu-border-strong);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--ilu-core), var(--ilu-plasma));
+  color: white;
+  border: none;
+}
+
+.auth-request-card,
+.grant-item {
+  background: rgba(19, 18, 36, 0.5);
+  border: 1px solid var(--ilu-glass-border);
+  border-radius: var(--ilu-radius-sm);
+  padding: 10px;
+}
+
+.auth-request-head,
+.grant-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ilu-text);
+}
+
+.auth-request-card .glass-card-text,
+.grant-item .glass-card-text { margin-top: 6px; }
+
+/* ===================================================================
+   EMPTY STATE
+   =================================================================== */
+
+.empty-state {
+  text-align: center;
+  padding: var(--ilu-gap-lg);
+  color: var(--ilu-text-dim);
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.empty-orb {
+  font-size: 20px;
+  opacity: 0.4;
+}

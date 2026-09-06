@@ -2,201 +2,136 @@
 <html lang="es">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
   <title>I.L.U. — Inteligencia Local Unificada</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><circle cx='50' cy='50' r='40' fill='%234f46e5'/><circle cx='40' cy='40' r='15' fill='rgba(139,92,246,0.5)'/></svg>">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><defs><radialGradient id='g' cx='50%' cy='40%' r='60%'><stop offset='0%' stop-color='%238b5cf6'/><stop offset='100%' stop-color='%231e1b4b'/></radialGradient></defs><circle cx='50' cy='50' r='48' fill='url(%23g)'/><circle cx='40' cy='38' r='14' fill='rgba(217,70,239,0.6)'/></svg>">
   <link rel="stylesheet" href="/css/ilu.css">
-  <link rel="stylesheet" href="/css/states.css">
+  <link rel="stylesheet" href="/css/panels.css">
 </head>
 <body>
 
-  <!-- ====== BARRA SUPERIOR ====== -->
-  <header class="topbar">
-    <div class="topbar-brand">
-      <div class="topbar-brand-dot"></div>
-      <span>I.L.U.</span>
-      <div class="mode-badge" id="modeBadge" data-mode="manual">
-        <div class="mode-badge-dot"></div>
-        <span id="modeText">Manual</span>
+  <!-- ====== ESCENA PRINCIPAL (full-viewport) ====== -->
+  <div id="stage" class="stage">
+
+    <!-- Fondo ambiental: gradientes + nebula -->
+    <div class="bg-ambient" id="bgAmbient">
+      <div class="bg-nebula"></div>
+      <div class="bg-gradient"></div>
+    </div>
+
+    <!-- Presencia central: Canvas de plasma + aura -->
+    <div class="presence-core" id="presenceCore">
+      <canvas id="iluPlasma"></canvas>
+      <div class="aura" id="aura"></div>
+    </div>
+
+    <!-- Órbita de estado: etiqueta natural alrededor del núcleo -->
+    <div class="state-orbit" id="stateOrbit">
+      <span class="state-label" id="stateLabel">Te escucho</span>
+      <span class="state-hint" id="stateHint"></span>
+    </div>
+
+    <!-- Chat flotante (vidrio) -->
+    <div class="chat-shell" id="chatShell">
+      <header class="chat-header">
+        <span class="chat-title">I.L.U.</span>
+        <div class="chat-status" id="chatStatus"></div>
+      </header>
+
+      <div class="chat-messages" id="chatMessages" role="log" aria-live="polite"></div>
+
+      <div class="chat-composer" id="chatComposer">
+        <textarea
+          class="chat-input"
+          id="chatInput"
+          placeholder="Escribe o pulsa el micrófono…"
+          rows="1"
+          aria-label="Mensaje para I.L.U."
+        ></textarea>
+        <button class="chat-mic" id="micButton" title="Hablar con I.L.U." aria-label="Activar conversación por voz">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M12 2a3 3 0 0 1 3 3v7a3 3 0 0 1-6 0V5a3 3 0 0 1 3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="22"/></svg>
+        </button>
+        <button class="chat-send" id="chatSend" aria-label="Enviar">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
       </div>
     </div>
 
-    <nav class="topbar-nav">
-      <button class="topbar-btn active" data-view="chat" title="Conversar">
-        Conversar
+    <!-- Dock minimal (esquina inferior derecha) -->
+    <nav class="dock" id="dock" aria-label="Paneles de I.L.U.">
+      <button class="dock-item" data-panel="chat" title="Conversar" aria-pressed="true">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        <span class="dock-label">Conversar</span>
       </button>
-      <button class="topbar-btn" data-view="tasks" title="Tareas">
-        Tareas
+      <button class="dock-item" data-panel="tasks" title="Tareas">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+        <span class="dock-label">Tareas</span>
       </button>
-      <button class="topbar-btn" data-view="permissions" title="Permisos">
-        Permisos
+      <button class="dock-item" data-panel="agents" title="Agentes">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>
+        <span class="dock-label">Agentes</span>
       </button>
-      <button class="topbar-btn" data-view="about" title="Identidad">
-        I.L.U.
+      <button class="dock-item" data-panel="skills" title="Skills">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+        <span class="dock-label">Skills</span>
       </button>
-      <button class="topbar-btn" id="sidebarToggle" title="Panel lateral">
-        ☰
+      <button class="dock-item" data-panel="memory" title="Memoria">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M6 2v6h.01M10 2v6h.01M14 2v6h.01M18 2v6h.01M8 15H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-4"/><line x1="16" y1="8" x2="16" y2="14"/><line x1="8" y1="8" x2="8" y2="14"/><line x1="12" y1="8" x2="12" y2="14"/></svg>
+        <span class="dock-label">Memoria</span>
+      </button>
+      <button class="dock-item" data-panel="activity" title="Actividad">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        <span class="dock-label">Actividad</span>
+      </button>
+      <button class="dock-item" data-panel="permissions" title="Permisos">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+        <span class="dock-label">Permisos</span>
+      </button>
+      <button class="dock-item" data-panel="settings" title="Sistema">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span class="dock-label">Sistema</span>
       </button>
     </nav>
-  </header>
 
-  <!-- ====== APP ====== -->
-  <div class="app">
+    <!-- Mini status line (lenguaje natural) -->
+    <div class="mini-status" id="miniStatus" aria-live="polite"></div>
 
-    <!-- ====== PANEL PRINCIPAL ====== -->
-    <main class="main-panel">
-
-      <!-- === VISTA: CONVERSACIÓN === -->
-      <div id="viewChat" class="chat-view">
-
-        <!-- Presencia de I.L.U. (Canvas de Plasma) -->
-        <aside class="presence-zone">
-          <div class="presence-canvas-wrap">
-            <canvas id="iluPlasma"></canvas>
-          </div>
-          <div class="ilu-state-label" id="stateLabel">
-            I.L.U. está lista
-          </div>
-          <div class="ilu-presence-details" id="presenceDetails"></div>
-        </aside>
-
-        <!-- Chat -->
-        <div class="chat-column">
-          <div class="chat-messages" id="chatMessages">
-            <div class="chat-msg assistant">
-              <div>Hola. Soy I.L.U., tu inteligencia local unificada. ¿En qué puedo ayudarte?</div>
-              <div class="msg-meta">IDENTITY</div>
-            </div>
-          </div>
-
-          <div class="chat-input-row">
-            <textarea
-              class="chat-input"
-              id="chatInput"
-              placeholder="Escribe un mensaje a I.L.U.…"
-              rows="1"
-            ></textarea>
-            <button class="chat-send" id="chatSend">Enviar</button>
-            <button class="chat-mic" id="micButton" title="Hablar con I.L.U." aria-label="Activar conversación por voz">🎙</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- === VISTA: TAREAS === -->
-      <div id="viewTasks" class="core-zone" style="display:none;">
-        <div class="chat-area" style="max-width:100%;">
-          <div class="sidebar-title" style="margin-bottom:16px; font-size:14px; text-transform:none; letter-spacing:normal; color:var(--ilu-text);">
-            Tareas en segundo plano
-          </div>
-          <div id="tasksList">
-            <div class="empty-state">
-              <div class="empty-state-icon">📋</div>
-              <div>Cargando tareas…</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- === VISTA: PERMISOS === -->
-      <div id="viewPermissions" class="core-zone" style="display:none;">
-        <div class="chat-area" style="max-width:100%;">
-
-          <div class="sidebar-title" style="margin-bottom:16px; font-size:14px; text-transform:none; letter-spacing:normal; color:var(--ilu-text);">
-            Estado de seguridad y permisos
-          </div>
-
-          <!-- Autonomía -->
-          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px; margin-bottom:16px;">
-            <div class="sidebar-title">Autonomía</div>
-            <div id="permAutonomy" style="font-size:14px; color:var(--ilu-text-secondary);">Cargando…</div>
-            <div style="margin-top:12px; display:flex; gap:8px;" id="autonomyButtons">
-              <button class="action-btn" data-level="manual">Manual</button>
-              <button class="action-btn" data-level="assisted">Asistido</button>
-              <button class="action-btn" data-level="autonomous">Autónomo</button>
-            </div>
-          </div>
-
-          <!-- Solicitudes abiertas -->
-          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px; margin-bottom:16px;">
-            <div class="sidebar-title">Solicitudes de autorización</div>
-            <div id="permRequests">
-              <div class="empty-state">
-                <div>Cargando…</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- Grants activos -->
-          <div style="background:var(--ilu-bg-card); border:1px solid var(--ilu-border); border-radius:var(--ilu-radius); padding:16px;">
-            <div class="sidebar-title">Permisos concedidos</div>
-            <div id="permGrants">
-              <div class="empty-state">
-                <div>Cargando…</div>
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </div>
-
-      <!-- === VISTA: ABOUT === -->
-      <div id="viewAbout" class="core-zone" style="display:none;">
-        <div class="chat-area" style="max-width:100%;">
-          <div id="aboutContent">
-            <div class="empty-state">
-              <div class="empty-state-icon">ℹ️</div>
-              <div>Cargando identidad…</div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-    </main>
-
-    <!-- ====== SIDEBAR ====== -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-section">
-        <div class="sidebar-title">Memoria / Contexto</div>
-        <div id="sidebarMemory">
-          <div class="sidebar-empty">Sin contexto aún</div>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="sidebar-title">Herramienta activa</div>
-        <div id="sidebarTool">
-          <div class="sidebar-empty">Ninguna</div>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="sidebar-title">Sub-agente</div>
-        <div id="sidebarSubagent">
-          <div class="sidebar-empty">Inactivo</div>
-        </div>
-      </div>
-
-      <div class="sidebar-section">
-        <div class="sidebar-title">Proveedor</div>
-        <div id="sidebarProvider">
-          <div class="sidebar-empty">Cargando…</div>
-        </div>
-      </div>
-    </aside>
+    <!-- Toast container (notificaciones proactividad/agentes/consolidación) -->
+    <div class="toast-container" id="toastContainer" aria-live="assertive"></div>
 
   </div>
 
-  <!-- ====== PANEL MODAL (Tareas detalladas, Permisos, etc) ====== -->
-  <div class="panel-overlay" id="panelOverlay">
-    <div class="panel">
-      <div class="panel-header">
-        <div class="panel-title" id="panelTitle"></div>
-        <button class="panel-close" id="panelClose">×</button>
+  <!-- ====== PANEL DRAWER (lateral derecho, glass) ====== -->
+  <div class="panel-drawer-overlay" id="panelDrawerOverlay" aria-hidden="true"></div>
+  <aside class="panel-drawer" id="panelDrawer" role="dialog" aria-modal="true" aria-labelledby="panelDrawerTitle">
+    <header class="panel-drawer-header">
+      <h2 class="panel-drawer-title" id="panelDrawerTitle"></h2>
+      <button class="panel-drawer-close" id="panelDrawerClose" aria-label="Cerrar panel">×</button>
+    </header>
+    <div class="panel-drawer-body" id="panelDrawerBody"></div>
+  </aside>
+
+  <!-- ====== PIN MODAL (overlay elegante) ====== -->
+  <div class="pin-modal-overlay" id="pinModalOverlay" aria-hidden="true"></div>
+  <div class="pin-modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinModalTitle">
+    <div class="pin-modal-glow"></div>
+    <header class="pin-modal-header">
+      <svg class="pin-modal-icon" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      <h2 id="pinModalTitle">Autorización requerida</h2>
+    </header>
+    <div class="pin-modal-body">
+      <p id="pinModalMessage">Ingresa tu PIN para confirmar la acción.</p>
+      <div class="pin-input-group">
+        <input type="password" id="pinInput" class="pin-input" placeholder="••••" autocomplete="off" aria-label="PIN del owner">
       </div>
-      <div id="panelBody"></div>
+      <div class="pin-modal-actions">
+        <button class="pin-modal-btn pin-modal-btn-cancel" id="pinModalCancel">Cancelar</button>
+        <button class="pin-modal-btn pin-modal-btn-confirm" id="pinModalConfirm">Confirmar</button>
+      </div>
     </div>
   </div>
 
+  <!-- Scripts (orden de dependencias) -->
   <script src="/js/api.js"></script>
   <script src="/js/ilu-plasma.js"></script>
   <script src="/js/ilu-core.js"></script>

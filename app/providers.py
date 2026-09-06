@@ -24,6 +24,19 @@ class AIProvider:
             "El proveedor debe implementar generate()"
         )
 
+    def stream(self, message, context=None, tools=None):
+        """
+        Generador de eventos de streaming.
+        Yields dicts con:
+          - {"type": "delta", "text": ...}  — tokens incrementales
+          - {"type": "text", "content": ...} — respuesta completa (sin tool calls)
+          - {"type": "tool_call", ...}       — llamada a herramienta nativa
+          - {"type": "error", ...}           — error controlado
+        """
+        raise NotImplementedError(
+            "El proveedor debe implementar stream()"
+        )
+
     def _messages(self, message, context):
         """
         Mensajes de sistema y usuario compartidos por todos
@@ -275,6 +288,138 @@ class LocalProvider(AIProvider):
                 "detail": str(error)
             }
 
+    def stream(self, message, context=None, tools=None):
+        """
+        Streaming desde Ollama (NDJSON /api/chat con stream=true).
+
+        Emite eventos delta por token; al final, si el mensaje trae
+        tool_calls nativas, emite un tool_call final (vía toolshape).
+        Misma política fail-closed (available_tools) que generate().
+        """
+        available_tools = self._available_tools(tools)
+        native_tools = toolshape.openai_functions(tools)
+
+        payload = {
+            "model": self.model,
+            "messages": self._messages(message, context),
+            "stream": True,
+            "think": False,
+            "options": {
+                "num_predict": self.max_tokens
+            },
+            "keep_alive": "5m"
+        }
+
+        if native_tools:
+            payload["tools"] = native_tools
+
+        url = f"{self.base_url}/api/chat"
+
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+
+            tool_calls_accum = {}
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line.decode("utf-8"))
+                except json.JSONDecodeError:
+                    continue
+
+                message_data = data.get("message", {})
+                content = message_data.get("content", "")
+
+                if content:
+                    yield {"type": "delta", "text": content}
+
+                # Acumular tool_calls nativos si vienen
+                for call in toolshape.parse_tool_calls(message_data):
+                    idx = call.get("index", 0)
+                    if idx not in tool_calls_accum:
+                        tool_calls_accum[idx] = {
+                            "tool": call["tool"],
+                            "arguments": call["arguments"],
+                            "reason": call.get("reason", ""),
+                        }
+                    else:
+                        # arguments puede venir fragmentado (string JSON)
+                        existing = tool_calls_accum[idx]
+                        try:
+                            merged = json.loads(existing["arguments"])
+                            incoming = json.loads(call["arguments"])
+                            merged.update(incoming)
+                            existing["arguments"] = json.dumps(merged)
+                        except Exception:
+                            pass
+
+            # Final: si hay tool_calls acumulados, emite el primero permitido
+            for idx, tc in tool_calls_accum.items():
+                if tc["tool"] in available_tools:
+                    yield {
+                        "type": "tool_call",
+                        "tool": tc["tool"],
+                        "arguments": (
+                            json.loads(tc["arguments"])
+                            if isinstance(tc["arguments"], str)
+                            else tc["arguments"]
+                        ),
+                        "reason": tc["reason"],
+                    }
+                    return
+
+                # Tool no permitida → fail-closed: no se ejecuta
+                if tc["tool"] not in available_tools:
+                    yield {
+                        "type": "error",
+                        "content": (
+                            f"El modelo solicitó la herramienta "
+                            f"'{tc['tool']}' pero no está disponible."
+                        ),
+                        "detail": "tool_not_allowed"
+                    }
+                    return
+
+            # Sin tool_calls: emite texto final (ya fue streamed)
+            yield {"type": "text", "content": ""}
+
+        except requests.exceptions.Timeout:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. agotó el tiempo de espera "
+                    "del modelo local."
+                ),
+                "detail": f"Timeout después de {self.timeout} segundos."
+            }
+
+        except requests.exceptions.RequestException as error:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo comunicarse "
+                    "con Ollama."
+                ),
+                "detail": str(error)
+            }
+
+        except Exception as error:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo procesar "
+                    "la respuesta del modelo local."
+                ),
+                "detail": str(error)
+            }
+
 
 class OmniRouteProvider(AIProvider):
     """
@@ -432,6 +577,155 @@ class OmniRouteProvider(AIProvider):
                 "detail": str(error)
             }
 
+    def stream(self, message, context=None, tools=None):
+        """
+        Streaming desde OmniRoute (SSE /chat/completions con stream=true).
+
+        Emite eventos delta por token (choices[0].delta.content); acumula
+        delta.tool_calls para emitir un tool_call final. Sin clave →
+        evento de error sin tocar la red. Misma política fail-closed
+        (available_tools) que generate().
+        """
+        if not self.api_key:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. no puede usar OmniRoute: no hay clave "
+                    "configurada (ILU_OMNIROUTE_API_KEY o "
+                    "security/omniroute.key)."
+                ),
+                "detail": "missing_api_key"
+            }
+            return
+
+        available_tools = self._available_tools(tools)
+        native_tools = toolshape.openai_functions(tools)
+
+        payload = {
+            "model": self.model,
+            "messages": self._messages(message, context),
+            "stream": True
+        }
+
+        if native_tools:
+            payload["tools"] = native_tools
+
+        url = f"{self.base_url}/chat/completions"
+
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=self._auth_headers(),
+                timeout=self.timeout,
+                stream=True
+            )
+            response.raise_for_status()
+
+            tool_calls_accum = {}
+
+            for line in response.iter_lines():
+                if not line:
+                    continue
+                line = line.decode("utf-8").strip()
+                if not line.startswith("data:"):
+                    continue
+                if line == "data: [DONE]":
+                    break
+                try:
+                    data = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+
+                choices = data.get("choices") or []
+                if not choices:
+                    continue
+
+                delta = choices[0].get("delta", {})
+                content = delta.get("content")
+
+                if content:
+                    yield {"type": "delta", "text": content}
+
+                # Acumular tool_calls (delta.tool_calls en OpenAI)
+                for call in delta.get("tool_calls", []):
+                    idx = call.get("index", 0)
+                    fn = call.get("function", {})
+                    if idx not in tool_calls_accum:
+                        tool_calls_accum[idx] = {
+                            "tool": fn.get("name", ""),
+                            "arguments": fn.get("arguments", "{}"),
+                            "reason": "",
+                        }
+                    else:
+                        # arguments llega fragmentado
+                        existing = tool_calls_accum[idx]
+                        try:
+                            merged = json.loads(existing["arguments"])
+                            incoming = json.loads(fn.get("arguments", "{}"))
+                            merged.update(incoming)
+                            existing["arguments"] = json.dumps(merged)
+                        except Exception:
+                            pass
+
+            # Final: si hay tool_calls acumulados, emite el primero permitido
+            for idx, tc in tool_calls_accum.items():
+                if tc["tool"] in available_tools:
+                    yield {
+                        "type": "tool_call",
+                        "tool": tc["tool"],
+                        "arguments": (
+                            json.loads(tc["arguments"])
+                            if isinstance(tc["arguments"], str)
+                            else tc["arguments"]
+                        ),
+                        "reason": tc["reason"],
+                    }
+                    return
+
+                if tc["tool"] not in available_tools:
+                    yield {
+                        "type": "error",
+                        "content": (
+                            f"El modelo solicitó la herramienta "
+                            f"'{tc['tool']}' pero no está disponible."
+                        ),
+                        "detail": "tool_not_allowed"
+                    }
+                    return
+
+            yield {"type": "text", "content": ""}
+
+        except requests.exceptions.Timeout:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. agotó el tiempo de espera "
+                    "del proveedor OmniRoute."
+                ),
+                "detail": f"Timeout después de {self.timeout} segundos."
+            }
+
+        except requests.exceptions.RequestException as error:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo comunicarse "
+                    "con OmniRoute."
+                ),
+                "detail": str(error)
+            }
+
+        except Exception as error:
+            yield {
+                "type": "error",
+                "content": (
+                    "I.L.U. no pudo procesar "
+                    "la respuesta de OmniRoute."
+                ),
+                "detail": str(error)
+            }
+
 
 class CloudProvider(AIProvider):
     """
@@ -446,6 +740,20 @@ class CloudProvider(AIProvider):
 
     def generate(self, message, context=None, tools=None):
         return {
+            "type": "text",
+            "content": (
+                "El proveedor cloud está preparado para "
+                "incorporar un modelo de inteligencia."
+            )
+        }
+
+    def stream(self, message, context=None, tools=None):
+        """
+        Streaming de compatibilidad: emite un único evento de texto
+        (no hay modelo real detrás). Los proveedores reales (Local,
+        OmniRoute) definen su propio stream.
+        """
+        yield {
             "type": "text",
             "content": (
                 "El proveedor cloud está preparado para "
@@ -487,6 +795,23 @@ class FallbackProvider(AIProvider):
 
         self.primary = primary or LocalProvider()
         self.fallback = fallback or LocalProvider()
+
+        # Tope al tiempo de espera de la pierna de RESPALDO. Los proveedores
+        # por defecto soportan 600s de timeout (arranque/descarga lenta de
+        # un modelo local), pero si el backend Acepta la conexión y nunca
+        # responde, I.L.U. quedaría congelada ~10 minutos. Con este tope la
+        # pierna de respaldo resuelve en, a lo sumo, ILU_FALLBACK_TIMEOUT_CAP
+        # segundos (120 por defecto), configurable para quien la necesite más
+        # larga. No cambia la tolerancia del PRIMARIO (que suele tardar).
+        cap = int(
+            os.environ.get(
+                "ILU_FALLBACK_TIMEOUT_CAP",
+                "120"
+            )
+        )
+        fallback_timeout = getattr(self.fallback, "timeout", None)
+        if fallback_timeout and fallback_timeout > cap:
+            self.fallback.timeout = cap
 
         self.name = self.primary.name
         self.version = self.primary.version
@@ -538,6 +863,53 @@ class FallbackProvider(AIProvider):
             result.setdefault("provider_used_version", self.primary.version)
 
         return result
+
+    def stream(self, message, context=None, tools=None):
+        """
+        Streaming con fallback: streamea el primario; si este devuelve
+        error ANTES de emitir un token (o conexión fallida), cambia al
+        stream del fallback. Etiqueta `provider_used` al cerrar. Nunca
+        duplica tokens.
+        """
+        # Flag: ¿emitimos ya al menos un token/delta del primario?
+        emitted_primary_token = False
+
+        try:
+            primary_stream = self.primary.stream(
+                message, context=context, tools=tools
+            )
+
+            for event in primary_stream:
+                # El primer delta/textual marca que el primario respondió
+                if event.get("type") in ("delta", "text", "tool_call"):
+                    emitted_primary_token = True
+
+                yield event
+
+                # Si fue error y NO emitimos token → activar fallback
+                if event.get("type") == "error" and not emitted_primary_token:
+                    break
+            else:
+                # Primario terminó sin error → éxito
+                return
+
+        except Exception:
+            # Cualquier excepción en primario → fallback
+            pass
+
+        # --- Fallback ---
+        fallback_stream = self.fallback.stream(
+            message, context=context, tools=tools
+        )
+
+        for event in fallback_stream:
+            yield event
+
+        # Etiqueta final
+        if isinstance(event, dict):
+            event["fallback"] = True
+            event["provider_used"] = self.fallback.name
+            event["provider_used_version"] = self.fallback.version
 
 
 def create_runtime_provider():

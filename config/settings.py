@@ -82,6 +82,17 @@ class ILUSettings:
             "memory/proactivity.jsonl"
         )
 
+        # ---- Fase C: Scheduler + Agentes programados ----
+        self.scheduler_path = os.environ.get(
+            "ILU_SCHEDULER_PATH",
+            "memory/scheduler.jsonl"
+        )
+
+        self.agents_path = os.environ.get(
+            "ILU_AGENTS_PATH",
+            "memory/agents.jsonl"
+        )
+
         # ---- Bloque 13: ejecución real gateada (run_command / apps / media) ----
         # Ruta de la lista blanca de comandos/aplicaciones del mundo y los
         # confinamientos de ejecución (timeout y tamaño máximo de salida).

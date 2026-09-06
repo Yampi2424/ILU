@@ -510,6 +510,13 @@ def core_env(tmp_path_factory):
         tmp_path_factory.mktemp("t") / "tasks.json"
     )
 
+    # Los comandos que sí pasan por el LLM (p. ej. "me gusta el café")
+    # deben resolver rápido aunque el backend esté caído o trabado:
+    # con timeouts cortos, un proveedor ausente falla en segundos en
+    # lugar de bloquear el turno los 600s por defecto (env-dependiente).
+    os.environ["ILU_OLLAMA_TIMEOUT"] = "3"
+    os.environ["ILU_OMNIROUTE_TIMEOUT"] = "3"
+
     from app.core import ILUCore
     return ILUCore()
 

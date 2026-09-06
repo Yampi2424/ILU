@@ -631,6 +631,34 @@ window.ILUPlasma = (function () {
       particles: 80, pSpeed: 8, pLife: 4.0, pMin: 0.5, pMax: 2.4,
       filaments: 9, fLife: 5.5, fWidth: 0.7
     },
+    // Fase G: streaming (palabra a palabra) — remolino cian-violeta constante
+    streaming: {
+      speed: 0.95, amplitude: 0.34, density: 0.9,
+      r: 90, g: 170, b: 250,
+      particles: 105, pSpeed: 15, pLife: 2.8, pMin: 0.5, pMax: 2.7,
+      filaments: 14, fLife: 3.8, fWidth: 0.9
+    },
+    // Fase G: investigación profunda — órbita amplia, neblina violeta intensa
+    researching: {
+      speed: 0.55, amplitude: 0.5, density: 1.1,
+      r: 130, g: 80, b: 250,
+      particles: 130, pSpeed: 16, pLife: 2.4, pMin: 0.5, pMax: 3.0,
+      filaments: 16, fLife: 3.2, fWidth: 1.0
+    },
+    // Fase G: job programado disparado — pulso internecién, cian
+    scheduled: {
+      speed: 0.7, amplitude: 0.28, density: 0.8,
+      r: 60, g: 200, b: 220,
+      particles: 90, pSpeed: 12, pLife: 3.5, pMin: 0.5, pMax: 2.4,
+      filaments: 11, fLife: 4.5, fWidth: 0.75
+    },
+    // Fase G: consolidando memoria — aurora suave verde-violeta
+    consolidating: {
+      speed: 0.4, amplitude: 0.26, density: 0.7,
+      r: 70, g: 170, b: 140,
+      particles: 70, pSpeed: 7, pLife: 4.6, pMin: 0.5, pMax: 2.2,
+      filaments: 8, fLife: 6.0, fWidth: 0.6
+    },
     authorization: {
       speed: 0.2, amplitude: 0.15, density: 0.5,
       r: 210, g: 155, b: 30,
@@ -782,6 +810,9 @@ window.ILUPlasma = (function () {
     _tintG = lerp(_tintG, _tG, lerpF);
     _tintB = lerp(_tintB, _tB, lerpF);
 
+    // Actividad de fondo (skills/agentes/research/consolidación)
+    _updateActivity(dt);
+
     // Silhouette: sube, se mantiene (hold), se disuelve
     _silTimer += dt;
     if (_silHold > 0) {
@@ -873,43 +904,43 @@ window.ILUPlasma = (function () {
     var color = { r: Math.round(_tintR), g: Math.round(_tintG), b: Math.round(_tintB) };
     var glowColor = { r: Math.min(255, color.r + 55), g: Math.min(255, color.g + 40), b: Math.min(255, color.b + 20) };
 
+    // Actividad + voz combinadas como "energía total"
+    var totalEnergy = Math.max(_energy, _activity);
+
     // Silhouette blending
-    var effectiveAmplitude = _amplitude * (1 - _silhouette * 0.55) * energyBoost;
-    var effectiveDensity = _density * (1 + _silhouette * 0.15) + _energy * 0.25;
+    var effectiveAmplitude = _amplitude * (1 - _silhouette * 0.55) * (1 + totalEnergy * 0.9);
+    var effectiveDensity = _density * (1 + _silhouette * 0.15) + totalEnergy * 0.25;
 
     // --- HALO DIFUSO ---
-    // La energía viva de la voz hace latir el halo y la amplitud:
-    // el plasma respira con quien habla.
-    var energyBoost = 1 + _energy * 0.9;
-    var breathe = Math.sin(_time * 0.5 * _speed) * (0.12 + _energy * 0.3);
-    var haloR = _plasmaRadius * (1.25 + breathe + _energy * 0.12);
+    // La energía viva (voz + actividad) hace latir el halo y la amplitud.
+    var energyBoost = 1 + totalEnergy * 0.9;
+    var breathe = Math.sin(_time * 0.5 * _speed) * (0.12 + totalEnergy * 0.3);
+    var haloR = _plasmaRadius * (1.25 + breathe + totalEnergy * 0.12);
     var haloGrd = _ctx.createRadialGradient(cx, cy, _plasmaRadius * 0.3, cx, cy, haloR);
-    haloGrd.addColorStop(0, rgbStr(color, 0.06 + _energy * 0.05));
-    haloGrd.addColorStop(0.5, rgbStr(glowColor, 0.025 + _energy * 0.04));
+    haloGrd.addColorStop(0, rgbStr(color, 0.06 + totalEnergy * 0.05));
+    haloGrd.addColorStop(0.5, rgbStr(glowColor, 0.025 + totalEnergy * 0.04));
     haloGrd.addColorStop(1, 'rgba(0,0,0,0)');
     _ctx.fillStyle = haloGrd;
     _ctx.beginPath();
     _ctx.arc(cx, cy, haloR, 0, 6.2832);
     _ctx.fill();
 
-    // --- ANILLO DE RESONANCIA (voz real) ---
-    // Onda de energía que emana de la presencia con la voz viva
-    // (del usuario al escuchar, de I.L.U. al responder). Es la
-    // "voz visible" del plasma: reacciona al audio real, no a un
-    // ecualizador. Silencioso en reposo (_energy ≈ 0).
-    if (_energy > 0.03) {
-      var ringR = _plasmaRadius * (1 + _energy * 0.55);
-      var ringA = Math.min(1, _energy * 1.5);
+    // --- ANILLO DE RESONANCIA (voz + actividad de fondo) ---
+    // Onda de energía que emana de la presencia. Reacciona al audio
+    // real del usuario/I.L.U. y a eventos de skills/agentes/research.
+    if (totalEnergy > 0.03) {
+      var ringR = _plasmaRadius * (1 + totalEnergy * 0.55);
+      var ringA = Math.min(1, totalEnergy * 1.5);
       _ctx.globalCompositeOperation = 'screen';
       _ctx.globalAlpha = ringA * 0.55;
       _ctx.strokeStyle = rgbStr(glowColor, 1);
-      _ctx.lineWidth = 1.5 + _energy * 4;
+      _ctx.lineWidth = 1.5 + totalEnergy * 4;
       _ctx.lineCap = 'round';
       _ctx.beginPath();
       _ctx.arc(cx, cy, ringR, 0, 6.2832);
       _ctx.stroke();
       _ctx.globalAlpha = ringA * 0.2;
-      _ctx.lineWidth = 8 + _energy * 6;
+      _ctx.lineWidth = 8 + totalEnergy * 6;
       _ctx.beginPath();
       _ctx.arc(cx, cy, ringR * 1.07, 0, 6.2832);
       _ctx.stroke();
@@ -971,9 +1002,8 @@ window.ILUPlasma = (function () {
     _ctx.globalAlpha = 1;
 
     // --- BRILLO CENTRAL (siempre) ---
-    // El núcleo se enciende con la voz viva: al hablar se vuelve más
-    // luminoso, como una entidad que "cobra voz".
-    var corePulse = 0.3 + Math.sin(_time * 0.8 * _speed) * 0.1 + _energy * 0.45;
+    // El núcleo se enciende con voz + actividad (evento en segundo plano).
+    var corePulse = 0.3 + Math.sin(_time * 0.8 * _speed) * 0.1 + totalEnergy * 0.45;
     var coreGrd = _ctx.createRadialGradient(cx, cy, 0, cx, cy, _plasmaRadius * 0.25);
     coreGrd.addColorStop(0, rgbStr({ r: 255, g: 255, b: 255 }, corePulse * 0.4));
     coreGrd.addColorStop(0.4, rgbStr(glowColor, corePulse * 0.25));
@@ -1007,6 +1037,29 @@ window.ILUPlasma = (function () {
     _tEnergy = clamp(level || 0, 0, 1);
   }
 
+  /**
+   * Actividad de eventos (skills, agentes, research, consolidación):
+   * un pulso breve que enciende el núcleo y la amplitud, sin cambiar el
+   * estado. La UI la llama cuando algo "pasa" en segundo plano.
+   */
+  var _activity = 0, _tActivity = 0;
+
+  function feedActivity(level) {
+    _tActivity = clamp((level || 0), 0, 1);
+  }
+
+  function setIntensity(level) {
+    feedActivity(level);
+  }
+
+  function _updateActivity(dt) {
+    _tActivity = Math.max(_tActivity, _energy); // voz siempre manda
+    _activity = lerp(_activity, _tActivity, 1 - Math.exp(-12 * dt));
+    if (_tActivity > _energy + 0.0001 && _activity > _tActivity - 0.02) {
+      _tActivity = _energy; // pulso se agota solo
+    }
+  }
+
   return {
     init: init,
     start: start,
@@ -1016,6 +1069,8 @@ window.ILUPlasma = (function () {
     getFPS: getFPS,
     forceSilhouette: forceSilhouette,
     setEnergy: setEnergy,
+    feedActivity: feedActivity,
+    setIntensity: setIntensity,
     resize: _resize
   };
 })();

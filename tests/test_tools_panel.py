@@ -50,13 +50,16 @@ def test_panel_registers_five_tools():
 
     tools = {tool["name"]: tool["permission"] for tool in manager.list_tools()}
 
-    assert tools == {
+    # Fase B añadió web_fetch; base eran 5 (memory_ingest se registra en core)
+    expected = {
         "system_time": "safe",
         "web_search": "safe",
         "read_file": "safe",
         "notify": "safe",
         "write_file": "ask",
+        "web_fetch": "safe",
     }
+    assert tools == expected
 
 
 def test_direct_web_search_via_natural_language(monkeypatch, tmp_path):
@@ -248,9 +251,11 @@ def test_tools_exposed_to_model(monkeypatch, tmp_path):
 
     assert result["success"] is True
     names = {tool["name"] for tool in result["tools"]}
+    # Fase B añadió memory_ingest y web_fetch; bloque 13 añadió run_command, open_app, media_control
     assert names == {
         "system_time", "web_search",
         "read_file", "notify", "write_file",
+        "memory_ingest", "web_fetch",
         # Bloque 13: ejecución real gateada (se registran en ILUCore).
         "run_command", "open_app", "media_control",
     }

@@ -2,41 +2,51 @@
  * I.L.U. — Componente visual de la Presencia
  *
  * Gestiona el estado visual de I.L.U. delegando al motor de plasma
- * (ILUPlasma) que renderiza en Canvas.
+ * (ILUPlasma) que renderiza en Canvas. Recibe los estados guiados por
+ * SSE (streaming/researching/scheduled/consolidating) y por voz.
  *
  * Estados:
  *   idle, listening, thinking, working, responding,
- *   learning, authorization, error, emergency
+ *   learning, streaming, researching, scheduled, consolidating,
+ *   authorization, error, emergency
  *
- * Este módulo NO toma decisiones de autoridad;
- * solo refleja lo que el backend reporta.
+ * Este módulo NO toma decisiones de autoridad; solo refleja lo que el
+ * backend reporta.
  */
 
 window.ILUCore = (function () {
   'use strict';
 
   const STATES = {
-    IDLE:           'idle',
-    LISTENING:      'listening',
-    THINKING:       'thinking',
-    WORKING:        'working',
-    RESPONDING:     'responding',
-    LEARNING:       'learning',
-    AUTHORIZATION:  'authorization',
-    ERROR:          'error',
-    EMERGENCY:      'emergency'
+    IDLE:          'idle',
+    LISTENING:     'listening',
+    THINKING:      'thinking',
+    WORKING:       'working',
+    RESPONDING:    'responding',
+    LEARNING:      'learning',
+    STREAMING:     'streaming',
+    RESEARCHING:   'researching',
+    SCHEDULED:     'scheduled',
+    CONSOLIDATING: 'consolidating',
+    AUTHORIZATION: 'authorization',
+    ERROR:         'error',
+    EMERGENCY:     'emergency'
   };
 
   const STATE_LABELS = {
-    idle:           'I.L.U. está presente',
-    listening:      'Te escucho',
-    thinking:       'Pensando…',
-    working:        'Trabajando…',
-    responding:     'Te hablo',
-    learning:       'Aprendiendo…',
-    authorization:  'Esperando autorización…',
-    error:          'Error',
-    emergency:      'Emergencia activa'
+    idle:          'Presente',
+    listening:     'Te escucho',
+    thinking:      'Pensando…',
+    working:       'Trabajando…',
+    responding:    'Te hablo',
+    learning:      'Aprendí algo nuevo',
+    streaming:     'Escribiendo…',
+    researching:   'Investigando…',
+    scheduled:     'Ejecuté lo programado',
+    consolidating: 'Doblando mis recuerdos',
+    authorization: 'Espero tu autorización',
+    error:         'Error',
+    emergency:     'Emergencia activa'
   };
 
   let _current = STATES.IDLE;
@@ -63,6 +73,7 @@ window.ILUCore = (function () {
   function _init() {
     if (_initialized) return;
     _labelEl = document.getElementById('stateLabel');
+    _hintEl = document.getElementById('stateHint');
 
     // Inicializar motor de plasma
     if (window.ILUPlasma && window.ILUPlasma.init()) {
@@ -72,7 +83,7 @@ window.ILUCore = (function () {
     _initialized = true;
   }
 
-  function set(state) {
+  function set(state, hint) {
     if (!_initialized) _init();
 
     var validState = STATES[state.toUpperCase()];
@@ -90,6 +101,11 @@ window.ILUCore = (function () {
       _labelEl.textContent = STATE_LABELS[validState] || '';
       _labelEl.setAttribute('data-state', validState);
     }
+
+    // Hint efímero (lenguaje natural opcional)
+    if (_hintEl) {
+      _hintEl.textContent = (hint && hint !== STATE_LABELS[validState]) ? hint : '';
+    }
   }
 
   function get() {
@@ -98,6 +114,15 @@ window.ILUCore = (function () {
 
   function isIdle() {
     return _current === STATES.IDLE;
+  }
+
+  /**
+   * Alimenta la intensidad del plasma con actividad de segundo plano
+   * (skills, agentes, research, consolidación). La UI la llama cuando
+   * algo "pasa" sin cambiar el estado.
+   */
+  function setIntensity(n) {
+    if (window.ILUPlasma) window.ILUPlasma.feedActivity(n);
   }
 
   /**
@@ -165,6 +190,7 @@ window.ILUCore = (function () {
     get: get,
     isIdle: isIdle,
     applyFromResponse: applyFromResponse,
+    setIntensity: setIntensity,
     showListening: showListening,
     showThinking: showThinking,
     showIdle: showIdle

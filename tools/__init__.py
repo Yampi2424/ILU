@@ -1,7 +1,7 @@
 from tools.manager import ToolManager
 from tools.system import get_system_time
 from tools.call import ToolCall
-from tools.search import web_search
+from tools.search import web_search, web_fetch
 from tools.filesystem import read_file, write_file
 # Importamos con alias para no sombrear el submódulo tools.notify (el
 # nombre de la función coincide con el del módulo; si no se hace así,
@@ -131,6 +131,31 @@ def create_tool_manager():
                 }
             },
             "required": ["path", "content"]
+        }
+    )
+
+    manager.register(
+        name="web_fetch",
+        description=(
+            "Leer el texto visible de una URL HTTP(S) pública. "
+            "Guard SSRF: bloquea localhost, redes privadas y link-local. "
+            "Permiso safe (solo lectura)."
+        ),
+        handler=web_fetch,
+        permission="safe",
+        schema={
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string",
+                    "description": "URL a leer (http/https)."
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Máximo de bytes a leer (default 64000)."
+                }
+            },
+            "required": ["url"]
         }
     )
 

@@ -17,6 +17,7 @@ from config.settings import ILUSettings
 from tools import create_tool_manager, ToolCall
 from tasks import TaskManager
 from app.subagent import SubAgent
+from app.skills import create_skill_manager
 
 # ---- Bloque 8: sistema de autoridad, permisos y autonomía gobernada ----
 from security.grant_store import GrantStore
@@ -102,6 +103,14 @@ class ILUCore:
         self.security = SecurityGate()
         self.audit = AuditLog()
         self.tasks = TaskManager(path=self.settings.tasks_path)
+        # SkillManager: catálogo de skills y ejecución gateada.
+        # Inyectamos run_tool=_execute_tool_call (modo "skill") y synthesize=provider.generate.
+        self.skills = create_skill_manager(
+            run_tool=lambda tc: self._execute_tool_call(tc, mode="skill"),
+            synthesize=lambda prompt: self.provider.generate(
+                prompt, context=None, tools=[]
+            ),
+        )
 
         # ---- Bloque 8: autoridad, permisos, autonomía gobernada ----
         #
@@ -133,6 +142,22 @@ class ILUCore:
         self.proactivity = ProactivityEngine(
             path=self.settings.proactivity_path
         )
+
+        # ---- Fase C: Scheduler + Agentes programados ----
+        from app.scheduler import create_scheduler, JobStore
+        from app.agents import create_agent_manager, AgentStore
+
+        self.scheduler_store = JobStore(path=self.settings.scheduler_path)
+        self.scheduler = create_scheduler(self, job_store=self.scheduler_store)
+
+        self.agent_store = AgentStore(path=self.settings.agents_path)
+        self.agents = create_agent_manager(self, agent_store=self.agent_store)
+
+        # ---- Fase D: Deep Research ----
+        from app.deep_research import create_deep_research
+
+        self.deep_research = create_deep_research(self)
+
         self.perception = create_perception_hub()
         self.integrations = IntegrationManager(
             security=self.security,
@@ -1048,6 +1073,70 @@ class ILUCore:
             }
         )
 
+        # Fase E: ingestión de material local a la memoria semántica.
+        # permission "safe" (inofensiva: solo escribe en la memoria PROPIA
+        # de I.L.U.), scope de workspace. El handler se cierra sobre el
+        # router de memoria del núcleo; nunca toca Authority ni GrantStore.
+        def _memory_ingest(source=None, tag=None):
+            from app.ingest import ingest_path, _is_sensitive
+            from tools.filesystem import resolve_within_workspace, workspace_root
+
+            if not source:
+                return {
+                    "success": False,
+                    "error": "source_required",
+                }
+
+            # Check sensitive paths BEFORE resolving (relative to workspace root)
+            base = workspace_root()
+            candidate = (base / source).resolve()
+            if _is_sensitive(str(candidate)):
+                return {"success": False, "error": "sensitive_path"}
+
+            try:
+                return ingest_path(
+                    source,
+                    self.memory,
+                    source="ingest",
+                    tag=tag,
+                )
+            except ValueError as e:
+                if "path_outside_workspace" in str(e):
+                    return {"success": False, "error": "outside_workspace"}
+                return {"success": False, "error": "tool_execution_failed", "detail": str(e)}
+            except Exception as e:
+                return {"success": False, "error": "tool_execution_failed", "detail": str(e)}
+
+        self.tools.register(
+            name="memory_ingest",
+            description=(
+                "Leer un archivo del workspace e incorporar su contenido "
+                "a la memoria semántica de I.L.U. (scope de workspace, "
+                "permiso de solo lectura + escritura a su propia memoria)."
+            ),
+            handler=_memory_ingest,
+            permission="safe",
+            schema={
+                "type": "object",
+                "properties": {
+                    "source": {
+                        "type": "string",
+                        "description": (
+                            "Ruta (relativa al workspace) del material a "
+                            "incorporar."
+                        )
+                    },
+                    "tag": {
+                        "type": "string",
+                        "description": (
+                            "Etiqueta opcional para agrupar la memoria."
+                        )
+                    }
+                },
+                "required": ["source"]
+            }
+        )
+
     def _extract_run_command(self, message):
         """Extrae el comando de 'ejecutá/ejecuta/corré/corre <comando>'."""
         lowered = message.lower().strip()
@@ -1530,6 +1619,124 @@ class ILUCore:
                 f"Tengo {stats['total']} recuerdos: {counts}.",
                 "memory_read",
                 memory_count=stats["total"]
+            )
+
+        # --------------------------------------------------------------
+        # INGESTAR material local -> memoria semántica (Fase E)
+        # --------------------------------------------------------------
+        ingest_prefixes = (
+            "ingestá ",
+            "ingesta ",
+            "incorporá a tu memoria ",
+            "incorporar a tu memoria ",
+            "aprendé de ",
+            "aprende de ",
+        )
+
+        for prefix in ingest_prefixes:
+            if lowered.startswith(prefix):
+                source = message[len(prefix):].strip().strip(":.,;")
+
+                if not source:
+                    return self._memory_reply(
+                        "¿Qué archivo o carpeta quieres que incorpore "
+                        "a mi memoria?",
+                        "memory_ingest_ask",
+                    )
+
+                # El permiso de memory_ingest es "safe" y el handler es
+                # workspace-scoped: pasa por la MISMA compuerta. No crea
+                # grants y nunca toca Authority.
+                tool_call = ToolCall(
+                    tool="memory_ingest",
+                    arguments={"source": source},
+                    reason="comando directo de ingesta",
+                )
+
+                result = self._execute_tool_call(
+                    tool_call,
+                    mode="memory",
+                )
+
+                if not result or not result.get("success"):
+                    error = (result or {}).get("error", "unknown_error")
+                    return self._memory_reply(
+                        f"No pude incorporar ese material: {error}.",
+                        "memory_ingest_error",
+                        error=error,
+                    )
+
+                chunks = result.get("chunks", 0)
+                keys = result.get("keys", [])
+
+                if chunks == 0:
+                    return self._memory_reply(
+                        "Leí el material, pero no encontré texto que "
+                        "incorporar.",
+                        "memory_ingest",
+                        source=source,
+                        chunks=0,
+                    )
+
+                return self._memory_reply(
+                    f"Incorporé {chunks} fragmento(s) de {source} a mi "
+                    "memoria.",
+                    "memory_ingest",
+                    source=source,
+                    chunks=chunks,
+                    memory_keys=keys,
+                )
+
+        # --------------------------------------------------------------
+        # CONSOLIDAR memoria temporal (Fase E)
+        # --------------------------------------------------------------
+        consolidate_phrases = (
+            "consolidá tu memoria",
+            "consolidá la memoria",
+            "consolida tu memoria",
+            "consolida la memoria",
+            "organizá tu memoria",
+            "organiza tu memoria",
+            "resumí tu memoria",
+            "resume tu memoria",
+        )
+
+        if any(phrase in lowered for phrase in consolidate_phrases):
+            from app.consolidation import consolidate
+
+            provider = getattr(self, "provider", None)
+            synthesize = None
+            if provider is not None and callable(getattr(provider, "generate", None)):
+                def synthesize(prompt):
+                    out = provider.generate(prompt)
+                    if isinstance(out, dict):
+                        return out.get("content") or ""
+                    return out or ""
+
+            result = consolidate(
+                self.memory,
+                synthesize=synthesize,
+            )
+
+            groups = result.get("groups", 0)
+            consolidated = result.get("consolidated", 0)
+            created = len(result.get("created_keys", []))
+
+            if groups == 0:
+                return self._memory_reply(
+                    "No había memorias temporales que consolidar.",
+                    "memory_consolidate",
+                    groups=0,
+                    consolidated=0,
+                )
+
+            return self._memory_reply(
+                f"Consolidé {groups} grupo(s) de memorias en "
+                f"{consolidated} recuerdo(s) semántico(s).",
+                "memory_consolidate",
+                groups=groups,
+                consolidated=consolidated,
+                created_keys=result.get("created_keys", []),
             )
 
         return None
@@ -2251,6 +2458,530 @@ class ILUCore:
 
         return None
 
+    def _skill_command(self, message):
+        """
+        Detecta comandos de skills por lenguaje natural.
+
+        Soporta:
+        - "ejecutá la skill X" / "corré la skill X" / "lanza la skill X"
+        - "qué skills tenés" / "que skills tenes" / "lista skills" / "skills"
+        - "skill X" (invocar directamente por nombre)
+
+        La ejecución se hace vía SkillManager.run(), que ya inyecta
+        run_tool=_execute_tool_call(mode="skill"), así que TODO pasa por
+        la compuerta SecurityGate + AuditLog (fail-closed, sin auto-grant).
+        """
+        lowered = message.lower().strip()
+
+        # 1) Listar skills disponibles
+        list_phrases = (
+            "qué skills tenés",
+            "que skills tenes",
+            "qué skills tienes",
+            "que skills tienes",
+            "lista skills",
+            "listar skills",
+            "muéstrame los skills",
+            "muestrame los skills",
+            "skills disponibles",
+            "qué skills hay",
+            "que skills hay",
+            "skills",
+        )
+
+        if any(phrase in lowered for phrase in list_phrases):
+            catalog = self.skills.catalog()
+
+            if not catalog:
+                return self._javis_reply(
+                    message,
+                    "Aún no hay skills en el catálogo.",
+                    "skill_list",
+                    skills=[],
+                )
+
+            lines = [f"{s['name']} — {s['description']}" for s in catalog[:20]]
+
+            return self._javis_reply(
+                message,
+                "Skills disponibles: " + " | ".join(lines),
+                "skill_list",
+                skills=catalog,
+            )
+
+        # 2) Ejecutar una skill por nombre
+        # Patrones: "ejecutá la skill X", "corré la skill X", "lanza la skill X",
+        # "skill X", "usa la skill X"
+        run_prefixes = (
+            "ejecutá la skill ",
+            "ejecuta la skill ",
+            "corré la skill ",
+            "corre la skill ",
+            "lanza la skill ",
+            "lanzá la skill ",
+            "usa la skill ",
+            "usá la skill ",
+            "skill ",
+        )
+
+        for prefix in run_prefixes:
+            if lowered.startswith(prefix):
+                skill_name = message[len(prefix):].strip().strip(":.,;").lower()
+
+                if not skill_name:
+                    return self._javis_reply(
+                        message,
+                        "¿Qué skill quieres ejecutar? Ejemplo: ejecuta la skill resumen.",
+                        "skill_ask",
+                    )
+
+                # La ejecución es gateada por _execute_tool_call (modo "skill")
+                result = self.skills.run(skill_name, actor="ilu")
+
+                return self._javis_reply(
+                    message,
+                    result.get("summary", "Skill ejecutada."),
+                    "skill_run",
+                    skill_result=result,
+                )
+
+        return None
+
+    # ---- Fase C: comandos NL para Agentes y Scheduler ----
+
+    def _agent_command(self, message):
+        """
+        Detecta comandos de agentes por lenguaje natural.
+
+        Soporta:
+        - "creá un agente que..." / "crear agente..."
+        - "qué agentes tenés" / "lista agentes" / "agentes"
+        - "corré el agente X" / "ejecutá el agente X" / "lanza agente X"
+        - "pausá el agente X" / "detén el agente X" / "desactivá agente X"
+        """
+        lowered = message.lower().strip()
+
+        # 1) Listar agentes
+        list_phrases = (
+            "qué agentes tenés",
+            "que agentes tenes",
+            "qué agentes tienes",
+            "que agentes tienes",
+            "lista agentes",
+            "listar agentes",
+            "muéstrame los agentes",
+            "muestrame los agentes",
+            "agentes disponibles",
+            "qué agentes hay",
+            "que agentes hay",
+            "agentes",
+        )
+
+        if any(phrase in lowered for phrase in list_phrases):
+            agents_list = self.agents.agent_store.list()
+
+            if not agents_list:
+                return self._javis_reply(
+                    message,
+                    "Aún no hay agentes creados.",
+                    "agent_list",
+                    agents=[],
+                )
+
+            lines = [f"{a.name} ({a.role}) — {a.objective[:60]}" for a in agents_list[:20]]
+
+            return self._javis_reply(
+                message,
+                "Agentes disponibles: " + " | ".join(lines),
+                "agent_list",
+                agents=[a.to_dict() for a in agents_list],
+            )
+
+        # 2) Crear agente: "creá un agente que..." / "crear agente que..."
+        create_phrases = (
+            "creá un agente que ",
+            "crea un agente que ",
+            "crear agente que ",
+            "creá agente que ",
+            "crea agente que ",
+        )
+
+        for prefix in create_phrases:
+            if lowered.startswith(prefix):
+                objective = message[len(prefix):].strip().strip(":.,;")
+                if not objective:
+                    return self._javis_reply(
+                        message,
+                        "¿Qué objetivo debe tener el agente? Ejemplo: 'creá un agente que revise el correo cada mañana'.",
+                        "agent_ask",
+                    )
+
+                # Extraer role opcional: "como [role] que..." o usar "monitor" por defecto
+                role = "monitor"
+                if " como " in objective.lower():
+                    parts = objective.lower().split(" como ", 1)
+                    objective = parts[0].strip()
+                    role = parts[1].split(" que ")[0].split(" para ")[0].strip() or "monitor"
+
+                agent = self.agents.create(
+                    name=f"agente-{len(self.agents.agent_store.list()) + 1}",
+                    role=role,
+                    objective=objective,
+                )
+
+                return self._javis_reply(
+                    message,
+                    f"Agente '{agent.name}' creado con objetivo: {objective}",
+                    "agent_create",
+                    agent=agent.to_dict(),
+                )
+
+        # 3) Ejecutar agente: "corré el agente X" / "ejecutá el agente X" / "lanza agente X"
+        run_prefixes = (
+            "corré el agente ",
+            "corre el agente ",
+            "ejecutá el agente ",
+            "ejecuta el agente ",
+            "lanza el agente ",
+            "lanzá el agente ",
+            "corré agente ",
+            "corre agente ",
+            "ejecutá agente ",
+            "ejecuta agente ",
+            "lanza agente ",
+            "lanzá agente ",
+        )
+
+        for prefix in run_prefixes:
+            if lowered.startswith(prefix):
+                agent_name = message[len(prefix):].strip().strip(":.,;")
+                if not agent_name:
+                    return self._javis_reply(
+                        message,
+                        "¿Qué agente quieres ejecutar? Ejemplo: 'corré el agente resumen-diario'.",
+                        "agent_ask",
+                    )
+
+                # Buscar por nombre
+                agents_list = self.agents.agent_store.list()
+                target = next((a for a in agents_list if a.name.lower() == agent_name.lower()), None)
+                if not target:
+                    return self._javis_reply(
+                        message,
+                        f"No encuentro agente llamado '{agent_name}'.",
+                        "agent_not_found",
+                    )
+
+                result = self.agents.run(target.id)
+
+                return self._javis_reply(
+                    message,
+                    result.get("result", {}).get("summary", "Agente ejecutado."),
+                    "agent_run",
+                    agent_result=result,
+                )
+
+        # 4) Pausar/desactivar agente: "pausá el agente X" / "detén el agente X"
+        pause_prefixes = (
+            "pausá el agente ",
+            "pausa el agente ",
+            "detén el agente ",
+            "detene el agente ",
+            "desactivá el agente ",
+            "desactiva el agente ",
+        )
+
+        for prefix in pause_prefixes:
+            if lowered.startswith(prefix):
+                agent_name = message[len(prefix):].strip().strip(":.,;")
+                agents_list = self.agents.agent_store.list()
+                target = next((a for a in agents_list if a.name.lower() == agent_name.lower()), None)
+                if not target:
+                    return self._javis_reply(
+                        message,
+                        f"No encuentro agente llamado '{agent_name}'.",
+                        "agent_not_found",
+                    )
+
+                self.agents.update(target.id, enabled=False)
+                return self._javis_reply(
+                    message,
+                    f"Agente '{target.name}' pausado.",
+                    "agent_pause",
+                    agent=target.to_dict(),
+                )
+
+        return None
+
+    def _scheduler_command(self, message):
+        """
+        Detecta comandos del scheduler por lenguaje natural.
+
+        Soporta:
+        - "programá un recordatorio cada 30 minutos: ..."
+        - "qué jobs tenés" / "lista jobs" / "jobs"
+        - "pausá el job X" / "activa el job X"
+        """
+        lowered = message.lower().strip()
+
+        # Listar jobs
+        list_phrases = (
+            "qué jobs tenés",
+            "que jobs tenes",
+            "qué jobs tienes",
+            "que jobs tienes",
+            "lista jobs",
+            "listar jobs",
+            "muéstrame los jobs",
+            "muestrame los jobs",
+            "jobs programados",
+            "qué tareas programadas",
+            "que tareas programadas",
+        )
+
+        if any(phrase in lowered for phrase in list_phrases):
+            jobs_list = self.scheduler_store.list()
+
+            if not jobs_list:
+                return self._javis_reply(
+                    message,
+                    "Aún no hay jobs programados.",
+                    "scheduler_list",
+                    jobs=[],
+                )
+
+            lines = [f"{j.name} ({j.kind}) — {j.schedule} — {'activo' if j.enabled else 'pausado'}" for j in jobs_list[:20]]
+
+            return self._javis_reply(
+                message,
+                "Jobs programados: " + " | ".join(lines),
+                "scheduler_list",
+                jobs=[j.to_dict() for j in jobs_list],
+            )
+
+        # Crear recordatorio simple: "recordá cada 30 min que..." / "recordarme en 1 hora que..."
+        remind_prefixes = (
+            "recordá cada ",
+            "recorda cada ",
+            "recordarme cada ",
+            "poné un recordatorio cada ",
+            "pon un recordatorio cada ",
+        )
+
+        for prefix in remind_prefixes:
+            if lowered.startswith(prefix):
+                rest = message[len(prefix):].strip()
+                # Formato esperado: "30 min: texto" o "1 hora: texto"
+                if ":" not in rest:
+                    return self._javis_reply(
+                        message,
+                        "Formato: 'recordá cada 30 min: revisar el horno'.",
+                        "scheduler_ask",
+                    )
+
+                schedule_part, text = rest.split(":", 1)
+                schedule_part = schedule_part.strip().lower()
+                text = text.strip()
+
+                # Parsear intervalo simple
+                interval_seconds = 300
+                if "min" in schedule_part:
+                    try:
+                        mins = int(schedule_part.replace("min", "").strip())
+                        interval_seconds = mins * 60
+                    except ValueError:
+                        pass
+                elif "hora" in schedule_part or "hr" in schedule_part:
+                    try:
+                        hrs = float(schedule_part.replace("hora", "").replace("hr", "").strip())
+                        interval_seconds = int(hrs * 3600)
+                    except ValueError:
+                        pass
+
+                job = self.scheduler_store.add(
+                    name=f"recordatorio-{len(self.scheduler_store.list()) + 1}",
+                    kind="reminder",
+                    schedule=f"interval:{interval_seconds}",
+                    params={"text": text},
+                )
+
+                return self._javis_reply(
+                    message,
+                    f"Recordatorio programado cada {schedule_part}: {text}",
+                    "scheduler_create",
+                    job=job.to_dict(),
+                )
+
+        # Crear job monitor: "vigilá cada 5 min tool X con args..."
+        monitor_prefixes = (
+            "vigilá cada ",
+            "vigila cada ",
+            "monitoreá cada ",
+            "monitorea cada ",
+        )
+
+        for prefix in monitor_prefixes:
+            if lowered.startswith(prefix):
+                rest = message[len(prefix):].strip()
+                if " tool " not in rest:
+                    return self._javis_reply(
+                        message,
+                        "Formato: 'vigilá cada 5 min tool system_time'.",
+                        "scheduler_ask",
+                    )
+
+                schedule_part, tool_part = rest.split(" tool ", 1)
+                schedule_part = schedule_part.strip().lower()
+                tool_part = tool_part.strip()
+
+                interval_seconds = 300
+                if "min" in schedule_part:
+                    try:
+                        mins = int(schedule_part.replace("min", "").strip())
+                        interval_seconds = mins * 60
+                    except ValueError:
+                        pass
+
+                # Parsear tool y args simples
+                tool_name = tool_part.split()[0] if tool_part else ""
+                tool_args = {}
+                if " args " in tool_part:
+                    try:
+                        import json
+                        args_str = tool_part.split(" args ", 1)[1]
+                        tool_args = json.loads(args_str)
+                    except Exception:
+                        pass
+
+                job = self.scheduler_store.add(
+                    name=f"monitor-{len(self.scheduler_store.list()) + 1}",
+                    kind="monitor",
+                    schedule=f"interval:{interval_seconds}",
+                    params={"tool": tool_name, "args": tool_args},
+                )
+
+                return self._javis_reply(
+                    message,
+                    f"Monitor programado cada {schedule_part}: {tool_name}",
+                    "scheduler_create",
+                    job=job.to_dict(),
+                )
+
+        return None
+
+    # ---- Fase D: comando NL para Deep Research ----
+    def _research_command(self, message):
+        """
+        Detecta intención de investigación profunda por lenguaje natural.
+
+        Soporta:
+        - "investigá profundamente sobre..."
+        - "investigación sobre..."
+        - "investigá a fondo..."
+        """
+        lowered = message.lower().strip()
+
+        research_phrases = (
+            "investigá profundamente",
+            "investiga profundamente",
+            "investigación sobre",
+            "investigacion sobre",
+            "investigá a fondo",
+            "investiga a fondo",
+            "deep research",
+            "investigación profunda",
+            "investigacion profunda",
+        )
+
+        for phrase in research_phrases:
+            if phrase in lowered:
+                # Extraer la pregunta después de la frase
+                idx = lowered.index(phrase)
+                question = message[idx + len(phrase):].strip().strip(":.,;")
+                if not question:
+                    return self._javis_reply(
+                        message,
+                        "¿Sobre qué tema quieres que investigue profundamente?",
+                        "research_ask",
+                    )
+
+                # Lanzar investigación en background
+                result = self.deep_research.run(question)
+
+                return self._javis_reply(
+                    message,
+                    result.get("message", "Investigación en curso."),
+                    "research_started",
+                    research=result,
+                )
+
+        return None
+
+    def _diagnostics_command(self, message):
+        """
+        Detecta comandos de diagnóstico/benchmark por lenguaje natural.
+
+        Soporta:
+        - "diagnóstico" / "diagnostico" / "salud" / "health check"
+        - "benchmark" / "rendimiento" / "corré benchmark"
+        """
+        lowered = message.lower().strip()
+
+        diagnostics_phrases = (
+            "diagnóstico",
+            "diagnostico",
+            "salud del sistema",
+            "health check",
+            "healthcheck",
+            "cómo estás",
+            "como estas",
+            "estado del sistema",
+        )
+
+        benchmark_phrases = (
+            "benchmark",
+            "rendimiento",
+            "corré benchmark",
+            "corre benchmark",
+            "ejecutá benchmark",
+            "ejecuta benchmark",
+        )
+
+        if any(phrase in lowered for phrase in diagnostics_phrases):
+            from app.diagnostics import quick_check
+            result = quick_check(self)
+
+            summary = (
+                f"Sistema {'saludable' if result['healthy'] else 'con problemas'}: "
+                f"{result['summary']['ok']}/{result['summary']['total']} checks OK."
+            )
+
+            return self._javis_reply(
+                message,
+                summary,
+                "diagnostics",
+                diagnostics=result,
+            )
+
+        if any(phrase in lowered for phrase in benchmark_phrases):
+            from app.benchmark import run_benchmark
+            # Modo offline por defecto (rápido, determinista)
+            result = run_benchmark(self, mode="offline")
+
+            summary = (
+                f"Benchmark {result['mode']}: {result['passed']}/{result['executed']} "
+                f"pasaron (score {result['score']:.0%})."
+            )
+
+            return self._javis_reply(
+                message,
+                summary,
+                "benchmark",
+                benchmark=result,
+            )
+
+        return None
+
     def _javis_reply(self, message, response, intent, **extra):
         payload = {
             "success": True,
@@ -2754,6 +3485,44 @@ class ILUCore:
             return javis_command
 
         # ==========================================================
+        # 0.8 SKILLS (lenguaje natural)
+        #
+        # I.L.U. puede listar y ejecutar sus skills por lenguaje
+        # natural. La ejecución es GATEADA: SkillManager corre cada
+        # paso de herramienta vía core._execute_tool_call(mode=
+        # "skill") → SecurityGate + AuditLog. Ninguna skill se
+        # autoconcede permisos.
+        # ==========================================================
+
+        skill_command = self._skill_command(message)
+
+        if skill_command is not None:
+            return skill_command
+
+        # ---- Fase C: comandos NL para Agentes y Scheduler ----
+        agent_command = self._agent_command(message)
+
+        if agent_command is not None:
+            return agent_command
+
+        scheduler_command = self._scheduler_command(message)
+
+        if scheduler_command is not None:
+            return scheduler_command
+
+        # ---- Fase D: comando NL para Deep Research ----
+        research_command = self._research_command(message)
+
+        if research_command is not None:
+            return research_command
+
+        # ---- Fase F: comando NL para Diagnostics + Benchmark ----
+        diagnostics_command = self._diagnostics_command(message)
+
+        if diagnostics_command is not None:
+            return diagnostics_command
+
+        # ==========================================================
         # 1. MEMORIA EXPLÍCITA
         # ==========================================================
 
@@ -3131,4 +3900,487 @@ class ILUCore:
             "core": self.name,
             "version": self.version,
             "awareness_context": awareness_ctx,
+        }
+
+    # ==========================================================
+    # STREAMING (Fase A) — generador de eventos SSE
+    # ==========================================================
+    def process_stream(self, message, session_id=None):
+        """
+        Idéntico a `process()`, pero como GENERADOR de eventos (SSE).
+
+        Emite dicts con la clave `event`:
+          - {"event": "status", "state": ...}: estado de la presencia
+            (listening / thinking / working / responding / learning).
+          - {"event": "token", "text": ...}: fragmentos del texto en vivo
+            mientras el modelo genera.
+          - {"event": "action", "kind": "tool", ...}: I.L.U. pidió
+            ejecutar una herramienta (ya gateada).
+          - {"event": "action_result", ...}: resultado en lenguaje claro.
+          - {"event": "final", "result": {...}}: el MISMO JSON que
+            devolvería `process()` (el frontend lo trata como cierre).
+          - {"event": "error", ...}: fallo controlado.
+
+        Los estadios deterministas (memoria, autoridad, javis, tareas,
+        sub-agente, tool directa) NO dependen del LLM: se resuelven igual
+        y se entregan como un único evento `final`. Solo el camino del
+        modelo (sección 7 de process) se emite con `token` en vivo.
+        """
+        if not isinstance(message, str):
+            yield {
+                "event": "error",
+                "success": False,
+                "response": "Mensaje no válido.",
+                "error": "message_must_be_text",
+            }
+            return
+
+        message = message.strip()
+
+        if not message:
+            yield {
+                "event": "error",
+                "success": False,
+                "response": "Mensaje vacío.",
+                "error": "empty_message",
+            }
+            return
+
+        session_id = session_id or "default"
+
+        yield {"event": "status", "state": "listening"}
+
+        # ==========================================================
+        # Estadios deterministas (sin LLM) — mismos helpers que process()
+        # ==========================================================
+
+        memory_command = self._memory_command(message)
+
+        if memory_command is not None:
+            memory_command["input"] = message
+            yield {"event": "final", "result": memory_command}
+            return
+
+        authority_command = self._authority_command(message)
+
+        if authority_command is not None:
+            yield {"event": "final", "result": authority_command}
+            return
+
+        javis_command = self._javis_command(message)
+
+        if javis_command is not None:
+            yield {"event": "final", "result": javis_command}
+            return
+
+        skill_command = self._skill_command(message)
+
+        if skill_command is not None:
+            yield {"event": "final", "result": skill_command}
+            return
+
+        # ---- Fase C: comandos NL para Agentes y Scheduler (stream) ----
+        agent_command = self._agent_command(message)
+
+        if agent_command is not None:
+            yield {"event": "final", "result": agent_command}
+            return
+
+        scheduler_command = self._scheduler_command(message)
+
+        if scheduler_command is not None:
+            yield {"event": "final", "result": scheduler_command}
+            return
+
+        # ---- Fase D: comando NL para Deep Research (stream) ----
+        research_command = self._research_command(message)
+
+        if research_command is not None:
+            yield {"event": "final", "result": research_command}
+            return
+
+        explicit_memory = self._save_explicit_memory(message)
+
+        if explicit_memory:
+            yield {
+                "event": "final",
+                "result": {
+                    "success": True,
+                    "input": message,
+                    "intent": "memory_save",
+                    "memory_type": explicit_memory["type"],
+                    "importance": explicit_memory["importance"],
+                    "response": (
+                        f"Recordado: {explicit_memory['content']}"
+                    ),
+                    "core": self.name,
+                    "version": self.version,
+                },
+            }
+            return
+
+        memory_results = self._search_memory(message)
+
+        if memory_results is not None:
+            if not memory_results:
+                response = (
+                    "No encontré recuerdos relacionados."
+                )
+            else:
+                response = (
+                    "Recuerdo: "
+                    + self._format_memories(memory_results)
+                )
+
+            yield {
+                "event": "final",
+                "result": {
+                    "success": True,
+                    "input": message,
+                    "intent": "memory_read",
+                    "response": response,
+                    "memory_count": len(memory_results),
+                    "core": self.name,
+                    "version": self.version,
+                },
+            }
+            return
+
+        task_command = self._task_command(message)
+
+        if task_command is not None:
+            yield {"event": "final", "result": task_command}
+            return
+
+        if self._is_subagent_request(message):
+            result = self._run_subagent(message)
+            yield {"event": "final", "result": result}
+            return
+
+        direct_tool_call = self._create_direct_tool_call(message)
+
+        if direct_tool_call:
+            direct_tool_result = self._execute_tool_call(
+                direct_tool_call
+            )
+
+            tool_response = self._build_tool_response(
+                message,
+                direct_tool_call,
+                direct_tool_result,
+                session_id=session_id,
+            )
+
+            yield {
+                "event": "action",
+                "kind": "tool",
+                "tool": direct_tool_call.tool,
+                "arguments": direct_tool_call.arguments,
+                "reason": direct_tool_call.reason,
+            }
+
+            yield {
+                "event": "final",
+                "result": tool_response,
+            }
+            return
+
+        # ==========================================================
+        # Camino del modelo (con streaming de tokens)
+        # ==========================================================
+
+        yield {"event": "status", "state": "thinking"}
+
+        context = self._get_context(message)
+
+        analysis = self.reasoning.analyze(
+            message,
+            context
+        )
+
+        if not analysis.get("success"):
+            yield {"event": "final", "result": analysis}
+            return
+
+        reasoning = self.reasoning.respond(
+            analysis
+        )
+
+        basic_response, intent = (
+            self._basic_response(
+                message
+            )
+        )
+
+        if basic_response:
+            response = basic_response
+
+            self._save_memory(
+                message,
+                memory_type="conversation",
+                importance=3
+            )
+
+            yield {
+                "event": "final",
+                "result": {
+                    "success": True,
+                    "input": message,
+                    "intent": intent,
+                    "response": response,
+                    "context": self._format_memories(
+                        context
+                    ),
+                    "reasoning": {
+                        "type": reasoning.get(
+                            "reasoning_type"
+                        ),
+                        "context_used": reasoning.get(
+                            "context_used",
+                            0
+                        ),
+                        "complexity": reasoning.get(
+                            "complexity",
+                            "simple"
+                        )
+                    },
+                    "provider": {
+                        "name": self.provider.name,
+                        "version": self.provider.version
+                    },
+                    "tools": self._tool_capabilities(),
+                    "tool": None,
+                    "tool_call": None,
+                    "tool_result": None,
+                    "core": self.name,
+                    "version": self.version,
+                },
+            }
+            return
+
+        model_context = list(context or [])
+
+        awareness = self._build_awareness(message, session_id)
+        model_context = self._awareness_context(awareness) + model_context
+
+        history_turns = self.conversations.recent(
+            session_id,
+            limit=self.settings.history_turns
+        )
+
+        if history_turns:
+            model_context.append({
+                "content": (
+                    self.conversations.transcript(history_turns)
+                )
+            })
+
+        self.conversations.append(
+            session_id,
+            "user",
+            message
+        )
+
+        provider_meta = {
+            "name": self.provider.name,
+            "version": self.provider.version,
+        }
+
+        text_parts = []
+        result = None
+        tool_call_data = None
+
+        stream_generate = getattr(
+            self.provider,
+            "stream_generate",
+            None,
+        )
+
+        if stream_generate is None:
+            # Proveedor sin streaming real (p. ej. un fake en tests): se
+            # envuelve generate() para emitir un único fragmento y el
+            # resultado canónico; los proveedores reales la definen.
+            def _wrap_stream(message, model_context, tools):
+                result = self.provider.generate(
+                    message,
+                    context=model_context,
+                    tools=tools,
+                )
+
+                if (
+                    isinstance(result, dict)
+                    and result.get("type") == "text"
+                ):
+                    yield {
+                        "type": "delta",
+                        "text": result.get("content", ""),
+                    }
+
+                yield result
+
+            stream_generate = _wrap_stream
+
+        try:
+            stream = stream_generate(
+                message,
+                model_context,
+                self._available_tools()
+            )
+
+            for event in stream:
+                if event.get("type") == "delta":
+                    text_parts.append(event["text"])
+                    yield {
+                        "event": "token",
+                        "text": event["text"],
+                    }
+                    continue
+
+                # Último evento: el resultado canónico.
+                result = event
+
+                provider_meta = {
+                    "name": (
+                        event.get("provider_used")
+                        or self.provider.name
+                    ),
+                    "version": (
+                        event.get("provider_used_version")
+                        or self.provider.version
+                    ),
+                }
+
+                if event.get("fallback"):
+                    provider_meta["fallback"] = True
+
+                if event.get("type") == "tool_call":
+                    tool_call_data = event
+        except Exception as error:  # noqa: BLE001 - error controlado para SSE
+            yield {
+                "event": "error",
+                "success": False,
+                "response": str(error),
+                "error": "internal_error",
+            }
+            return
+
+        # ---- El modelo pidió una herramienta ----
+        if tool_call_data is not None:
+            tool_call = ToolCall(
+                tool=tool_call_data.get("tool", ""),
+                arguments=tool_call_data.get(
+                    "arguments",
+                    {}
+                ),
+                reason=tool_call_data.get("reason", ""),
+            )
+
+            yield {
+                "event": "status",
+                "state": "working",
+            }
+
+            yield {
+                "event": "action",
+                "kind": "tool",
+                "tool": tool_call.tool,
+                "arguments": tool_call.arguments,
+                "reason": tool_call.reason,
+            }
+
+            tool_result = self._execute_tool_call(
+                tool_call,
+                mode="model"
+            )
+
+            tool_response = self._build_tool_response(
+                message,
+                tool_call,
+                tool_result,
+                source="model_tool",
+                session_id=session_id,
+            )
+
+            yield {
+                "event": "action_result",
+                "success": bool(
+                    tool_result.get("success")
+                ),
+                "response": tool_response.get(
+                    "response",
+                    ""
+                ),
+                "tool": tool_call.tool,
+            }
+
+            yield {
+                "event": "final",
+                "result": tool_response,
+            }
+            return
+
+        # ---- Texto completo (ya transmitido como tokens) ----
+        full_text = "".join(text_parts)
+
+        if isinstance(result, dict) and result.get("content"):
+            response = result["content"]
+        else:
+            response = (
+                full_text.strip()
+                or "I.L.U. no recibió una respuesta válida."
+            )
+
+        self.conversations.append(
+            session_id,
+            "assistant",
+            response
+        )
+
+        self._save_memory(
+            message,
+            memory_type="conversation",
+            importance=3
+        )
+
+        try:
+            self.learning.learn(message)
+        except Exception:
+            # El aprendizaje es best-effort (igual que en process()).
+            pass
+
+        awareness_ctx = self._awareness_context(awareness)
+
+        yield {
+            "event": "final",
+            "result": {
+                "success": True,
+                "input": message,
+                "intent": intent,
+                "response": response,
+                "context": self._format_memories(
+                    context
+                ),
+                "awareness": awareness,
+                "reasoning": {
+                    "type": reasoning.get(
+                        "reasoning_type"
+                    ),
+                    "context_used": reasoning.get(
+                        "context_used",
+                        0
+                    ),
+                    "complexity": reasoning.get(
+                        "complexity",
+                        "simple"
+                    )
+                },
+                "provider": provider_meta,
+                "tools": self._tool_capabilities(),
+                "tool": None,
+                "tool_call": None,
+                "tool_result": None,
+                "core": self.name,
+                "version": self.version,
+                "awareness_context": awareness_ctx,
+            },
         }

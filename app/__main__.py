@@ -456,45 +456,27 @@ class ILUHandler(BaseHTTPRequestHandler):
         path = self._path()
 
         if path == "/":
-            # Serve index.html from web directory
-            if self._send_file(os.path.join(WEB_DIR, "index.html")):
+            # Sirve index.html (ruta relativa; _send_file la une con WEB_DIR).
+            if self._send_file("index.html"):
                 return
 
-        # Serve static files from web/ directory
-        # Supports /css/*, /js/*, /assets/* and optional /static/* prefix
+        # Sirve archivos estáticos del shell web de I.L.U. desde web/.
+        # Lista blanca explícita: solo lo que es genuinamente interfaz
+        # (css, js, assets) cae aquí; cualquier endpoint API pasa a su
+        # rama elif correspondiente más abajo.
         static_path = self._path()
-        file_to_serve = static_path.lstrip("/")
-        # Allow both /static/css/... and /css/... forms
-        if static_path.startswith("/static"):
-            file_to_serve = static_path.replace("/static", "").lstrip("/")
-        # Skip if it's an API endpoint or reserved path
+
+        # Acepta tanto /css/foo como /static/css/foo (compatibilidad).
+        if static_path.startswith("/static/"):
+            static_path = "/" + static_path[len("/static/"):]
+
         if (
-            static_path
-            and not static_path.startswith("/api")
-            and not static_path.startswith("/healthz")
-            and not static_path.startswith("/tts")
-            and not static_path.startswith("/about")
-            and not static_path.startswith("/tasks")
-            and not static_path.startswith("/conversations")
-            and not static_path.startswith("/authorization-requests")
-            and not static_path.startswith("/grants")
-            and not static_path.startswith("/security")
-            and not static_path.startswith("/goals")
-            and not static_path.startswith("/profile")
-            and not static_path.startswith("/proactivity")
-            and not static_path.startswith("/perception")
-            and not static_path.startswith("/integrations")
-            and not static_path.startswith("/state")
-            and not static_path.startswith("/notifications")
-            and not static_path.startswith("/skills")
-            and not static_path.startswith("/scheduler")
-            and not static_path.startswith("/agents")
-            and not static_path.startswith("/research")
-            and not static_path.startswith("/memory")
-            and not static_path.startswith("/benchmark")
-            and not static_path.startswith("/diagnostics")
+            static_path.startswith("/css/")
+            or static_path.startswith("/js/")
+            or static_path.startswith("/assets/")
         ):
-            # file_to_serve already contains the correct relative path
+            # file_to_serve es la ruta relativa dentro de web/.
+            file_to_serve = static_path.lstrip("/")
             if self._send_file(file_to_serve):
                 return
 
